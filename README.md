@@ -745,7 +745,7 @@ PYPI_API_TOKEN
    - install build tools
    - build the package
    - run `twine check`
-   - upload the distributions with `python -m twine upload`
+   - upload the distributions with `python -m twine upload --skip-existing`
 
 The workflow uses:
 
