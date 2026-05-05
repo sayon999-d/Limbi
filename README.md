@@ -740,8 +740,9 @@ You can publish Limbi to PyPI from GitHub Actions with Twine.
 PYPI_API_TOKEN
 ```
 
-2. Create a GitHub Release or run the workflow manually from the Actions tab.
-3. The workflow in `.github/workflows/publish.yml` will:
+2. Add the token to the `pypi` environment as well if you want to keep release secrets environment-scoped.
+3. Create a GitHub Release or run the workflow manually from the Actions tab.
+4. The workflow in `.github/workflows/publish.yml` will:
    - install build tools
    - build the package
    - run `twine check`
