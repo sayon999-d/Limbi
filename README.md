@@ -202,16 +202,16 @@ All agents follow the same contract.
 
 ```mermaid
 flowchart LR
-    A[User prompt] --> B[Orchestrator]
-    B --> C[LLM reasoning]
-    C --> D[Delegation JSON]
-    D --> E[Agent registry lookup]
-    E --> F[BaseAgent.execute(action, params)]
-    F --> G[handle_<action>(...)]
-    G --> H[AgentResult]
-    H --> I[Audit log]
-    H --> J[Shared context memory]
-    I --> K[Final user response]
+    A["User prompt"] --> B["Orchestrator"]
+    B --> C["LLM reasoning"]
+    C --> D["Delegation JSON"]
+    D --> E["Agent registry lookup"]
+    E --> F["BaseAgent.execute<br/>(action, params)"]
+    F --> G["handle_<action>(...)"]
+    G --> H["AgentResult"]
+    H --> I["Audit log"]
+    H --> J["Shared context memory"]
+    I --> K["Final user response"]
     J --> K
 ```
 
