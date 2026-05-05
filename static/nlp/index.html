@@ -1,0 +1,245 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>StepWise NLP - Text Transformation Engine</title>
+    <meta name="description" content="Advanced NLP text transformation engine with humanization, summarization, readability optimization, and clipboard automation.">
+    <link rel="stylesheet" href="nlp.css">
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+</head>
+<body>
+    <div class="app" id="app">
+
+        <div class="bg-grid" id="bg-grid"></div>
+        <div class="bg-glow bg-glow-1"></div>
+        <div class="bg-glow bg-glow-2"></div>
+        <div class="bg-glow bg-glow-3"></div>
+
+        <header class="header" id="header">
+            <div class="header-left">
+                <div class="logo" id="logo">
+                    
+                    <div class="logo-text">
+                        <span class="logo-title">StepWise NLP</span>
+                        <span class="logo-subtitle">Transformation Engine</span>
+                    </div>
+                </div>
+            </div>
+            <div class="header-right">
+                <div class="connection-status" id="connection-status">
+                    <span class="status-dot" id="status-dot"></span>
+                    <span class="status-label" id="status-label">Connecting...</span>
+                </div>
+                <button class="header-btn" id="btn-theme" title="Toggle Theme">Theme</button>
+                <button class="header-btn" id="btn-history" title="Processing History">History</button>
+            </div>
+        </header>
+
+        <main class="main" id="main">
+
+            <section class="panel panel-input" id="panel-input">
+                <div class="panel-header">
+                    <h2 class="panel-title">
+                        
+                        Input Text
+                    </h2>
+                    <div class="panel-actions">
+                        <button class="btn-ghost" id="btn-paste" title="Paste from Clipboard">
+                            
+                            Paste
+                        </button>
+                        <button class="btn-ghost" id="btn-clear-input" title="Clear Input">
+                            
+                            Clear
+                        </button>
+                    </div>
+                </div>
+                <div class="textarea-wrapper">
+                    <textarea
+                        id="input-text"
+                        class="text-area input-area"
+                        placeholder="Paste or type your text here...&#10;&#10;The engine will analyze and transform it based on your configuration."
+                        spellcheck="false"
+                    ></textarea>
+                    <div class="textarea-counter" id="input-counter">0 words - 0 chars</div>
+                </div>
+
+                <div class="analysis-badges" id="analysis-badges" style="display:none;">
+                    <span class="badge badge-info" id="badge-words"></span>
+                    <span class="badge badge-info" id="badge-sentences"></span>
+                    <span class="badge" id="badge-ai"></span>
+                    <span class="badge" id="badge-verbosity"></span>
+                    <span class="badge" id="badge-readability"></span>
+                </div>
+
+                <div class="controls" id="controls">
+
+                    <div class="control-group">
+                        <label class="control-label">Mode</label>
+                        <div class="segmented-control" id="mode-control">
+                            <button class="seg-btn active" data-value="humanize">
+                                
+                                Humanize
+                            </button>
+                            <button class="seg-btn" data-value="summarize">
+                                
+                                Summarize
+                            </button>
+                            <button class="seg-btn" data-value="both">
+                                
+                                Both
+                            </button>
+                        </div>
+                    </div>
+
+                    <div class="control-group">
+                        <label class="control-label">Writing Style</label>
+                        <div class="segmented-control" id="style-control">
+                            <button class="seg-btn" data-value="casual">Casual</button>
+                            <button class="seg-btn active" data-value="professional">Professional</button>
+                            <button class="seg-btn" data-value="academic">Academic</button>
+                            <button class="seg-btn" data-value="concise">Concise</button>
+                        </div>
+                    </div>
+
+                    <div class="control-group">
+                        <div class="slider-header">
+                            <label class="control-label">Transformation Intensity</label>
+                            <span class="slider-value" id="tone-value">50 - Moderate</span>
+                        </div>
+                        <div class="slider-track-wrapper">
+                            <input type="range" id="tone-slider" class="slider" min="0" max="100" value="50" step="1">
+                            <div class="slider-labels">
+                                <span>Minimal</span>
+                                <span>Light</span>
+                                <span>Moderate</span>
+                                <span>Strong</span>
+                            </div>
+                        </div>
+                    </div>
+
+                    <div class="control-group" id="summary-length-group">
+                        <label class="control-label">Summary Length</label>
+                        <div class="segmented-control" id="summary-length-control">
+                            <button class="seg-btn" data-value="short">Short (20-30%)</button>
+                            <button class="seg-btn active" data-value="medium">Medium (40-60%)</button>
+                            <button class="seg-btn" data-value="long">Long (70-80%)</button>
+                        </div>
+                    </div>
+
+                    <div class="control-group options-row">
+                        <label class="toggle-option">
+                            <input type="checkbox" id="opt-clipboard" class="toggle-checkbox">
+                            <span class="toggle-switch"></span>
+                            <span class="toggle-label">Auto-Copy to Clipboard</span>
+                        </label>
+                        <label class="toggle-option">
+                            <input type="checkbox" id="opt-realtime" class="toggle-checkbox">
+                            <span class="toggle-switch"></span>
+                            <span class="toggle-label">Real-time Mode</span>
+                        </label>
+                    </div>
+
+                    <button class="btn-primary" id="btn-transform">
+                        <span class="btn-content" id="btn-transform-content">
+                            
+                            Transform Text
+                        </span>
+                        <span class="btn-loading" id="btn-transform-loading" style="display:none;">
+                            <div class="spinner"></div>
+                            Processing...
+                        </span>
+                    </button>
+                </div>
+            </section>
+
+            <section class="panel panel-output" id="panel-output">
+                <div class="panel-header">
+                    <h2 class="panel-title">
+                        
+                        Output
+                    </h2>
+                    <div class="panel-actions">
+                        <button class="btn-ghost" id="btn-copy" title="Copy to Clipboard" disabled>
+                            
+                            Copy
+                        </button>
+                        <button class="btn-ghost" id="btn-download" title="Download as .txt" disabled>
+                            
+                            Download
+                        </button>
+                    </div>
+                </div>
+
+                <div class="textarea-wrapper">
+                    <div class="text-area output-area" id="output-text">
+                        <div class="output-placeholder" id="output-placeholder">
+                            <div class="placeholder-icon">
+                                
+                            </div>
+                            <p class="placeholder-title">Ready to Transform</p>
+                            <p class="placeholder-sub">Enter your text and configure the pipeline to get started.</p>
+                        </div>
+                    </div>
+                    <div class="textarea-counter" id="output-counter" style="display:none;">0 words - 0 chars</div>
+                </div>
+
+                <div class="metrics-dashboard" id="metrics-dashboard" style="display:none;">
+                    <h3 class="metrics-title">
+                        
+                        Transformation Metrics
+                    </h3>
+                    <div class="metrics-grid">
+                        <div class="metric-card" id="metric-compression">
+                            <div class="metric-value" id="val-compression">-</div>
+                            <div class="metric-label">Compression</div>
+                        </div>
+                        <div class="metric-card" id="metric-input-words">
+                            <div class="metric-value" id="val-input-words">-</div>
+                            <div class="metric-label">Input Words</div>
+                        </div>
+                        <div class="metric-card" id="metric-output-words">
+                            <div class="metric-value" id="val-output-words">-</div>
+                            <div class="metric-label">Output Words</div>
+                        </div>
+                        <div class="metric-card" id="metric-ai-score">
+                            <div class="metric-value" id="val-ai-score">-</div>
+                            <div class="metric-label">AI Likelihood</div>
+                        </div>
+                        <div class="metric-card" id="metric-reading-ease">
+                            <div class="metric-value" id="val-reading-ease">-</div>
+                            <div class="metric-label">Reading Ease</div>
+                        </div>
+                        <div class="metric-card" id="metric-grade">
+                            <div class="metric-value" id="val-grade">-</div>
+                            <div class="metric-label">FK Grade</div>
+                        </div>
+                    </div>
+                    <div class="stages-applied" id="stages-applied" style="display:none;">
+                        <span class="stages-label">Pipeline:</span>
+                        <div class="stages-list" id="stages-list"></div>
+                    </div>
+                </div>
+            </section>
+        </main>
+
+        <div class="history-panel" id="history-panel">
+            <div class="history-header">
+                <h3>
+                    
+                    Processing History
+                </h3>
+                <button class="btn-ghost" id="btn-close-history">x</button>
+            </div>
+            <div class="history-list" id="history-list">
+                <p class="history-empty">No transformations yet.</p>
+            </div>
+        </div>
+
+        <div class="toast" id="toast"></div>
+    </div>
+
+    <script src="nlp.js"></script>
+</body>
+</html>

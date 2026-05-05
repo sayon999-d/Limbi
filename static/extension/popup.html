@@ -1,0 +1,72 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=600, initial-scale=1.0">
+    <title>StepWise AI</title>
+    <link rel="stylesheet" href="popup.css">
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+</head>
+<body>
+    <div class="app" id="app">
+
+        <header class="header" id="header">
+            <div class="header-left">
+                <h1 class="header-title" id="header-title">StepWise AI</h1>
+            </div>
+            <div class="header-right">
+                <button class="icon-btn" id="btn-agents" title="View Agents">Agents</button>
+                <button class="icon-btn" id="btn-clear" title="Clear Chat">Clear</button>
+                <div class="status-dot" id="status-dot" title="Disconnected"></div>
+            </div>
+        </header>
+
+        <div class="agent-panel" id="agent-panel">
+            <div class="agent-panel-header">
+                <h3> Registered Agents</h3>
+                <button class="icon-btn" id="btn-close-agents" title="Close">x</button>
+            </div>
+            <div class="agent-list" id="agent-list">
+                <div class="agent-loading">Loading agents...</div>
+            </div>
+        </div>
+
+        <main class="chat-container" id="chat-container">
+            <div class="welcome-screen" id="welcome-screen">
+                <h2>StepWise AI</h2>
+                <p class="welcome-sub">Your local AI agent orchestrator</p>
+                <div class="quick-actions" id="quick-actions">
+                    <button class="quick-btn" data-msg="What agents do you have available?"> View Agents</button>
+                    <button class="quick-btn" data-msg="Deploy main branch to staging"> Deploy</button>
+                    <button class="quick-btn" data-msg="Create a Jira ticket for the latest bug"> Create Ticket</button>
+                    <button class="quick-btn" data-msg="Show me my GitHub repos"> My Repos</button>
+                </div>
+            </div>
+            <div class="messages" id="messages"></div>
+        </main>
+
+        <div class="status-bar" id="status-bar">
+            <div class="status-bar-content" id="status-bar-content">
+                <span class="status-text" id="status-text">Ready</span>
+            </div>
+        </div>
+
+        <footer class="input-area" id="input-area">
+            <div class="input-wrapper" id="input-wrapper">
+                <textarea
+                    id="message-input"
+                    placeholder="Ask anything or trigger an agent action..."
+                    rows="1"
+                    maxlength="10000"
+                ></textarea>
+                <button class="send-btn" id="btn-send" title="Send (Enter)">Send</button>
+            </div>
+            <p class="input-hint" id="input-hint">
+                Enter to send - Shift+Enter for newline -
+                <span class="model-name" id="model-name">llama3.2:3b</span>
+            </p>
+        </footer>
+    </div>
+    <script src="popup.js"></script>
+</body>
+</html>

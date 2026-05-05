@@ -1,0 +1,62 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 600 120" width="600" height="120">
+  <defs>
+    <linearGradient id="grad" x1="0%" y1="0%" x2="100%" y2="0%">
+      <stop offset="0%" style="stop-color:#6C5CE7;stop-opacity:1">
+        <animate attributeName="stop-color" values="#6C5CE7;#0984E3;#00B894;#FD79A8;#6C5CE7" dur="4s" repeatCount="indefinite"/>
+      </stop>
+      <stop offset="50%" style="stop-color:#0984E3;stop-opacity:1">
+        <animate attributeName="stop-color" values="#0984E3;#00B894;#FD79A8;#6C5CE7;#0984E3" dur="4s" repeatCount="indefinite"/>
+      </stop>
+      <stop offset="100%" style="stop-color:#00B894;stop-opacity:1">
+        <animate attributeName="stop-color" values="#00B894;#FD79A8;#6C5CE7;#0984E3;#00B894" dur="4s" repeatCount="indefinite"/>
+      </stop>
+    </linearGradient>
+    <filter id="glow">
+      <feGaussianBlur stdDeviation="3" result="blur"/>
+      <feMerge>
+        <feMergeNode in="blur"/>
+        <feMergeNode in="SourceGraphic"/>
+      </feMerge>
+    </filter>
+  </defs>
+
+  <!-- Background pulse -->
+  <rect width="600" height="120" fill="transparent"/>
+
+  <!-- Animated Limbi text -->
+  <text x="300" y="75" text-anchor="middle" font-family="'Segoe UI', Arial, sans-serif" font-size="72" font-weight="bold" fill="url(#grad)" filter="url(#glow)">
+    <!-- Letter-by-letter fade in -->
+    <tspan opacity="0">
+      <animate attributeName="opacity" from="0" to="1" begin="0.1s" dur="0.4s" fill="freeze"/>
+      L
+    </tspan>
+    <tspan opacity="0">
+      <animate attributeName="opacity" from="0" to="1" begin="0.25s" dur="0.4s" fill="freeze"/>
+      i
+    </tspan>
+    <tspan opacity="0">
+      <animate attributeName="opacity" from="0" to="1" begin="0.4s" dur="0.4s" fill="freeze"/>
+      m
+    </tspan>
+    <tspan opacity="0">
+      <animate attributeName="opacity" from="0" to="1" begin="0.55s" dur="0.4s" fill="freeze"/>
+      b
+    </tspan>
+    <tspan opacity="0">
+      <animate attributeName="opacity" from="0" to="1" begin="0.7s" dur="0.4s" fill="freeze"/>
+      i
+    </tspan>
+  </text>
+
+  <!-- Underline sweep -->
+  <line x1="170" y1="92" x2="170" y2="92" stroke="url(#grad)" stroke-width="3" stroke-linecap="round">
+    <animate attributeName="x2" from="170" to="430" begin="1s" dur="0.6s" fill="freeze"/>
+    <animate attributeName="opacity" from="0" to="1" begin="1s" dur="0.1s" fill="freeze"/>
+  </line>
+
+  <!-- Tagline fade in -->
+  <text x="300" y="112" text-anchor="middle" font-family="'Segoe UI', Arial, sans-serif" font-size="14" fill="#888" opacity="0" letter-spacing="3">
+    <animate attributeName="opacity" from="0" to="1" begin="1.4s" dur="0.6s" fill="freeze"/>
+    OMNI-AGENT ORCHESTRATION
+  </text>
+</svg>

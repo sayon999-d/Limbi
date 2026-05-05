@@ -1,0 +1,91 @@
+{
+  "name": "limbi-vscode",
+  "displayName": "Limbi",
+  "description": "VS Code extension for Limbi, a multi-agent coding and orchestration platform.",
+  "version": "0.1.0",
+  "publisher": "limbi",
+  "engines": {
+    "vscode": "^1.90.0"
+  },
+  "categories": [
+    "Other",
+    "AI",
+    "Chat"
+  ],
+  "activationEvents": [
+    "onView:limbi.sidebar",
+    "onCommand:limbi.openPanel",
+    "onCommand:limbi.askAboutSelection",
+    "onCommand:limbi.refreshAgents",
+    "onCommand:limbi.generateMcpConfig"
+  ],
+  "main": "./src/extension.js",
+  "contributes": {
+    "commands": [
+      {
+        "command": "limbi.openPanel",
+        "title": "Limbi: Open Sidebar"
+      },
+      {
+        "command": "limbi.askAboutSelection",
+        "title": "Limbi: Ask About Selection"
+      },
+      {
+        "command": "limbi.refreshAgents",
+        "title": "Limbi: Refresh Agents"
+      },
+      {
+        "command": "limbi.generateMcpConfig",
+        "title": "Limbi: Generate MCP Config"
+      }
+    ],
+    "configuration": {
+      "title": "Limbi",
+      "properties": {
+        "limbi.apiBaseUrl": {
+          "type": "string",
+          "default": "http://127.0.0.1:8000",
+          "description": "Base URL for the running Limbi API."
+        },
+        "limbi.apiKey": {
+          "type": "string",
+          "default": "",
+          "description": "Optional API key sent to the Limbi backend when auth is enabled."
+        },
+        "limbi.pythonCommand": {
+          "type": "string",
+          "default": "python",
+          "description": "Python executable used when generating MCP server configuration."
+        },
+        "limbi.resolveShellEnvironment": {
+          "type": "boolean",
+          "default": true,
+          "description": "Resolve the configured Python command from your login shell before writing MCP configuration."
+        },
+        "limbi.includeSelectionByDefault": {
+          "type": "boolean",
+          "default": true,
+          "description": "Include the current editor selection in Limbi prompts sent from the sidebar."
+        }
+      }
+    },
+    "viewsContainers": {
+      "activitybar": [
+        {
+          "id": "limbi",
+          "title": "Limbi",
+          "icon": "./media/icon.svg"
+        }
+      ]
+    },
+    "views": {
+      "limbi": [
+        {
+          "type": "webview",
+          "id": "limbi.sidebar",
+          "name": "Assistant"
+        }
+      ]
+    }
+  }
+}

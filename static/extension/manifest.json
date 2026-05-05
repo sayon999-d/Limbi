@@ -1,0 +1,13 @@
+{
+  "manifest_version": 3,
+  "name": "Limbi - Agent Orchestrator",
+  "description": "Local AI-powered multi-agent orchestrator for development and operations workflows",
+  "version": "1.0.0",
+  "action": {
+    "default_popup": "popup.html"
+  },
+  "permissions": [],
+  "host_permissions": [
+    "http://localhost:8000/*"
+  ]
+}

@@ -1,0 +1,16 @@
+.env
+__pycache__/
+*.pyc
+chroma_db/
+*.egg-info/
+dist/
+build/
+.venv/
+venv/
+.vscode/mcp.json
+.vscode/settings.json
+.limbi/
+limbi_*.db
+limbi_*.db-shm
+limbi_*.db-wal
+dist-1.0.2/

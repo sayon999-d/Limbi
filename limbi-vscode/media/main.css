@@ -1,0 +1,187 @@
+:root {
+  color-scheme: dark;
+}
+
+body {
+  margin: 0;
+  font-family: var(--vscode-font-family);
+  color: var(--vscode-foreground);
+  background: linear-gradient(180deg, var(--vscode-sideBar-background) 0%, #121826 100%);
+}
+
+.shell {
+  padding: 14px;
+  display: grid;
+  gap: 14px;
+}
+
+.hero {
+  display: grid;
+  gap: 12px;
+  padding: 14px;
+  border-radius: 18px;
+  background: linear-gradient(135deg, rgba(16, 185, 129, 0.16), rgba(249, 115, 22, 0.12));
+  border: 1px solid rgba(255, 255, 255, 0.08);
+}
+
+.eyebrow {
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.12em;
+  color: #8bffcf;
+}
+
+.hero h1 {
+  margin: 6px 0 4px;
+  font-size: 18px;
+  line-height: 1.2;
+}
+
+.hero p {
+  margin: 0;
+  font-size: 12px;
+  line-height: 1.5;
+  color: var(--vscode-descriptionForeground);
+}
+
+.status-card,
+.composer,
+.messages,
+.agents {
+  padding: 12px;
+  border-radius: 16px;
+  background: rgba(15, 23, 42, 0.65);
+  border: 1px solid rgba(255, 255, 255, 0.08);
+}
+
+.status-label,
+.section-title,
+.composer label {
+  display: block;
+  margin-bottom: 8px;
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  color: #9fb6d9;
+}
+
+.actions {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 8px;
+}
+
+button {
+  border: 0;
+  border-radius: 999px;
+  padding: 10px 12px;
+  font-size: 12px;
+  cursor: pointer;
+  color: white;
+  background: linear-gradient(135deg, #0f766e, #155e75);
+}
+
+button.ghost {
+  background: rgba(255, 255, 255, 0.08);
+}
+
+button.send {
+  margin-top: 10px;
+  width: 100%;
+  background: linear-gradient(135deg, #ea580c, #0f766e);
+}
+
+textarea {
+  width: 100%;
+  box-sizing: border-box;
+  resize: vertical;
+  min-height: 110px;
+  border-radius: 14px;
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  background: rgba(2, 6, 23, 0.72);
+  color: var(--vscode-foreground);
+  padding: 12px;
+  font-family: var(--vscode-editor-font-family);
+  font-size: 12px;
+}
+
+#messages {
+  display: grid;
+  gap: 10px;
+  max-height: 320px;
+  overflow-y: auto;
+}
+
+.message {
+  padding: 10px;
+  border-radius: 12px;
+  border: 1px solid rgba(255, 255, 255, 0.08);
+}
+
+.message.user {
+  background: rgba(15, 118, 110, 0.18);
+}
+
+.message.assistant {
+  background: rgba(249, 115, 22, 0.12);
+}
+
+.message-role {
+  font-size: 11px;
+  font-weight: 700;
+  margin-bottom: 6px;
+  color: #d4f8ef;
+}
+
+.message-body {
+  margin: 0;
+  white-space: pre-wrap;
+  word-break: break-word;
+  font-family: var(--vscode-editor-font-family);
+  font-size: 12px;
+}
+
+.agents-list {
+  display: grid;
+  gap: 8px;
+}
+
+.agent-card {
+  border-radius: 12px;
+  background: rgba(2, 6, 23, 0.6);
+  border: 1px solid rgba(255, 255, 255, 0.07);
+  padding: 10px;
+}
+
+.agent-card summary {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  cursor: pointer;
+  list-style: none;
+  font-size: 12px;
+  font-weight: 600;
+}
+
+.agent-card summary::-webkit-details-marker {
+  display: none;
+}
+
+.action-count {
+  color: #8fbad2;
+  font-size: 11px;
+}
+
+.action-list {
+  margin-top: 10px;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.action-list code {
+  padding: 3px 8px;
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.08);
+  font-size: 11px;
+}
