@@ -11,7 +11,6 @@ permissions:
 jobs:
   publish:
     runs-on: ubuntu-latest
-    environment: pypi
 
     steps:
       - name: Check out repository
@@ -30,6 +29,15 @@ jobs:
 
       - name: Check distributions
         run: python -m twine check dist/*
+
+      - name: Verify PyPI token is configured
+        env:
+          TWINE_PASSWORD: ${{ secrets.PYPI_API_TOKEN }}
+        run: |
+          if [ -z "$TWINE_PASSWORD" ]; then
+            echo "PYPI_API_TOKEN is not set in GitHub Secrets."
+            exit 1
+          fi
 
       - name: Publish to PyPI with Twine
         env:
