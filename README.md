@@ -730,6 +730,32 @@ python -m pip install --upgrade limbi
 python -m limbi --generate-mcp-config
 ```
 
+## GitHub Actions Publishing
+
+You can publish Limbi to PyPI from GitHub Actions with Twine.
+
+1. Add this repository secret in GitHub:
+
+```text
+PYPI_API_TOKEN
+```
+
+2. Create a GitHub Release or run the workflow manually from the Actions tab.
+3. The workflow in `.github/workflows/publish.yml` will:
+   - install build tools
+   - build the package
+   - run `twine check`
+   - upload the distributions with `python -m twine upload`
+
+The workflow uses:
+
+```text
+TWINE_USERNAME=__token__
+TWINE_PASSWORD=${{ secrets.PYPI_API_TOKEN }}
+```
+
+Keep bumping the package version before each release, because PyPI will reject any file name that already exists.
+
 ### `chromadb not installed`
 
 ChromaDB is optional and only required for RAG.
