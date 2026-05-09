@@ -1,6 +1,9 @@
 name: Publish Limbi to PyPI
 
 on:
+  push:
+    tags:
+      - "v*"
   release:
     types: [published]
   workflow_dispatch:
