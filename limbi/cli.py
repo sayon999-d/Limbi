@@ -1,30 +1,18 @@
-"""Limbi CLI — talk to the omni-agent orchestrator from your terminal.
-
-Usage:
-    limbi "deploy main to staging"
-    limbi --provider openai --model gpt-4o "hello"
-    limbi --list-agents
-    limbi                          # interactive REPL
-"""
-
 from __future__ import annotations
 
 import asyncio
 import json
 import os
 import sys
-import textwrap
 from pathlib import Path
 from typing import Any
 
 import click
 
-# ---------------------------------------------------------------------------
-# Lazy-loaded rich helpers (only imported when the CLI actually runs)
-# ---------------------------------------------------------------------------
 
 def _get_console():
     from rich.console import Console
+
     return Console()
 
 
@@ -33,11 +21,10 @@ def _print_banner(console):
     from rich.text import Text
 
     banner = Text()
-    banner.append("⚡ ", style="bold yellow")
     banner.append("Limbi", style="bold bright_cyan")
     banner.append(" v1.0.2", style="dim")
-    banner.append(" — Omni-Agent Orchestrator\n", style="")
-    banner.append("    Type your prompt, or ", style="dim")
+    banner.append(" - Omni-Agent Orchestrator\n")
+    banner.append("Type your prompt, or ", style="dim")
     banner.append("/help", style="bold green")
     banner.append(" for commands. ", style="dim")
     banner.append("/quit", style="bold red")
@@ -53,7 +40,7 @@ def _print_agent_table(console):
 
     agents = list_agents()
     table = Table(
-        title="🤖 Registered Agents",
+        title="Registered Agents",
         title_style="bold bright_cyan",
         border_style="bright_cyan",
         show_lines=False,
@@ -66,7 +53,7 @@ def _print_agent_table(console):
     for name, actions in sorted(agents.items()):
         table.add_row(
             name,
-            ", ".join(actions[:5]) + ("…" if len(actions) > 5 else ""),
+            ", ".join(actions[:5]) + ("..." if len(actions) > 5 else ""),
             str(len(actions)),
         )
 
@@ -93,7 +80,7 @@ def _print_providers(console):
         "openai_compatible": "Any OpenAI-compatible API",
     }
     table = Table(
-        title="🔌 Supported Providers",
+        title="Supported Providers",
         border_style="bright_cyan",
         show_lines=False,
     )
@@ -127,12 +114,7 @@ def _generate_mcp_config(config_path: str | None = None) -> Path:
     return path
 
 
-# ---------------------------------------------------------------------------
-# Core chat logic
-# ---------------------------------------------------------------------------
-
 def _setup_env_overrides(provider: str | None, model: str | None, api_key: str | None):
-    """Push CLI flags into env vars so the provider layer picks them up."""
     if provider:
         os.environ["LLM_PROVIDER"] = provider
     if model:
@@ -141,11 +123,21 @@ def _setup_env_overrides(provider: str | None, model: str | None, api_key: str |
         os.environ["LLM_API_KEY"] = api_key
 
 
+def _is_parser_noise(error: str) -> bool:
+    return error.startswith(
+        (
+            "JSONDecodeError:",
+            "Unexpected JSON type:",
+            "Validation error:",
+        )
+    )
+
+
 async def _send_message(orchestrator, message: str, console) -> None:
     from rich.markdown import Markdown
     from rich.panel import Panel
 
-    with console.status("[bold cyan]Thinking…[/]", spinner="dots"):
+    with console.status("[bold cyan]Thinking...[/]", spinner="dots"):
         result = await orchestrator.chat(message)
 
     text = result.get("conversation_text", "").strip()
@@ -153,104 +145,109 @@ async def _send_message(orchestrator, message: str, console) -> None:
     errors = result.get("errors", [])
 
     if text:
-        console.print(Panel(
-            Markdown(text),
-            title="[bold bright_cyan]⚡ Limbi[/]",
-            border_style="bright_cyan",
-            padding=(1, 2),
-        ))
+        console.print(
+            Panel(
+                Markdown(text),
+                title="[bold bright_cyan]Limbi[/]",
+                border_style="bright_cyan",
+                padding=(1, 2),
+            )
+        )
 
     if delegations:
         for d in delegations:
-            status = "✅" if d.get("success") else "❌"
+            status = "OK" if d.get("success") else "FAIL"
             agent = d.get("agent", "?")
             action = d.get("action", "?")
             msg = d.get("data", {}).get("message", d.get("error", ""))
-            console.print(f"  {status} [bold]{agent}[/].[cyan]{action}[/] → {msg}")
+            console.print(f"  {status} [bold]{agent}[/].[cyan]{action}[/] -> {msg}")
         console.print()
 
-    if errors:
-        for e in errors:
-            console.print(f"  [red]⚠ {e}[/]")
+    visible_errors = [e for e in errors if not _is_parser_noise(e)]
+    if visible_errors:
+        for e in visible_errors:
+            console.print(f"  [red]WARNING: {e}[/]")
+    elif errors and not text and not delegations:
+        console.print("  [yellow]WARNING: Could not fully parse the model response.[/]")
 
 
 def _repl(orchestrator, console):
-    """Interactive Read-Eval-Print Loop."""
     from rich.markdown import Markdown
 
     _print_banner(console)
 
     while True:
         try:
-            user_input = console.input("[bold green]❯ [/]").strip()
+            user_input = console.input("> ").strip()
         except (EOFError, KeyboardInterrupt):
-            console.print("\n[dim]Goodbye! 👋[/]")
+            console.print("\nGoodbye.")
             break
 
         if not user_input:
             continue
 
-        # Slash commands
         if user_input.startswith("/"):
             cmd = user_input.lower().split()[0]
             if cmd in ("/quit", "/exit", "/q"):
-                console.print("[dim]Goodbye! 👋[/]")
+                console.print("Goodbye.")
                 break
-            elif cmd in ("/agents", "/list"):
+            if cmd in ("/agents", "/list"):
                 _print_agent_table(console)
                 continue
-            elif cmd in ("/providers",):
+            if cmd in ("/providers",):
                 _print_providers(console)
                 continue
-            elif cmd in ("/clear",):
+            if cmd in ("/clear",):
                 orchestrator.clear_history()
-                console.print("[dim]History cleared.[/]")
+                console.print("History cleared.")
                 continue
-            elif cmd in ("/help", "/h"):
-                console.print(Markdown(textwrap.dedent("""\
-                    ## Commands
-                    | Command | Description |
-                    |---------|-------------|
-                    | `/agents` | List all registered agents |
-                    | `/providers` | Show supported LLM providers |
-                    | `/clear` | Clear conversation history |
-                    | `/help` | Show this help |
-                    | `/quit` | Exit Limbi |
+            if cmd in ("/help", "/h"):
+                console.print(
+                    Markdown(
+                        """## Commands
+| Command | Description |
+|---------|-------------|
+| `/agents` | List all registered agents |
+| `/providers` | Show supported LLM providers |
+| `/clear` | Clear conversation history |
+| `/help` | Show this help |
+| `/quit` | Exit Limbi |
 
-                    **Tip:** Just type a natural-language prompt to talk to Limbi.
-                """)))
+Type a natural-language prompt to talk to Limbi.
+"""
+                    )
+                )
                 continue
-            # Fall through — treat as a normal prompt
 
         asyncio.run(_send_message(orchestrator, user_input, console))
 
 
-# ---------------------------------------------------------------------------
-# Click CLI
-# ---------------------------------------------------------------------------
-
 @click.command(context_settings={"help_option_names": ["-h", "--help"]})
 @click.argument("prompt", required=False, default=None)
 @click.option(
-    "--provider", "-p",
+    "--provider",
+    "-p",
     envvar="LLM_PROVIDER",
     default=None,
     help="LLM provider (ollama, openai, anthropic, google, groq, together, mistral, azure, cohere).",
 )
 @click.option(
-    "--model", "-m",
+    "--model",
+    "-m",
     envvar="LLM_MODEL",
     default=None,
     help="Model name (e.g. gpt-4o, claude-sonnet-4-20250514, llama3.2:3b).",
 )
 @click.option(
-    "--api-key", "-k",
+    "--api-key",
+    "-k",
     envvar="LLM_API_KEY",
     default=None,
     help="API key for the provider (or set LLM_API_KEY env var).",
 )
 @click.option(
-    "--list-agents", "-l",
+    "--list-agents",
+    "-l",
     is_flag=True,
     default=False,
     help="List all registered agents and exit.",
@@ -283,18 +280,6 @@ def main(
     generate_mcp_config: bool,
     mcp_config_path: str | None,
 ):
-    """⚡ Limbi — Omni-Agent Orchestrator.
-
-    Talk to 87+ AI agents from your terminal. Works with any LLM provider.
-
-    \b
-    Examples:
-        limbi "what agents do you have?"
-        limbi --provider openai --model gpt-4o "deploy main to staging"
-        limbi -p anthropic -m claude-sonnet-4-20250514 "review this code"
-        limbi                           # interactive mode
-        limbi --list-agents             # show all agents
-    """
     console = _get_console()
 
     if generate_mcp_config:
@@ -306,13 +291,11 @@ def main(
         )
         return
 
-    # ── Initialize .limbi/ workspace (BEFORE anything else) ───────
     from limbi.workspace import init_workspace, load_config
 
     ws_result = init_workspace()
 
     if ws_result["is_new"]:
-        # First run in this directory — show a welcome message
         from rich.panel import Panel
         from rich.text import Text
 
@@ -336,9 +319,9 @@ def main(
         console.print(Panel(welcome, border_style="green", padding=(1, 2)))
         console.print()
 
-    # ── Quick-info commands (no LLM needed) ──
     if list_agents:
-        import limbi  # noqa: F811 — triggers agent registration
+        import limbi
+
         _print_agent_table(console)
         return
 
@@ -346,10 +329,8 @@ def main(
         _print_providers(console)
         return
 
-    # ── Set up provider from flags / workspace config ──
     ws_config = load_config()
 
-    # Workspace config provides defaults; CLI flags override; env vars override both
     if not provider and not os.environ.get("LLM_PROVIDER"):
         provider = ws_config.get("provider")
     if not model and not os.environ.get("LLM_MODEL"):
@@ -357,15 +338,14 @@ def main(
 
     _setup_env_overrides(provider, model, api_key)
 
-    # Load .env from cwd if present
     try:
         from dotenv import load_dotenv
+
         load_dotenv()
     except ImportError:
         pass
 
-    # ── Import heavy modules only after env is configured ──
-    import limbi as _limbi  # noqa: F811 — triggers full init
+    import limbi as _limbi
     from limbi.orchestrator import Orchestrator
     from limbi.audit_log import init_db
 
@@ -381,10 +361,8 @@ def main(
     )
 
     if prompt:
-        # ── One-shot mode ──
         asyncio.run(_send_message(orchestrator, prompt, console))
     else:
-        # ── Interactive REPL ──
         _repl(orchestrator, console)
 
 
