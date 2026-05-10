@@ -33,10 +33,13 @@ class FileAgent(BaseAgent):
             "type": "file_management",
             "status": "ready",
             "capabilities": [
-                "list_directory", "analyze_file",
-                "find_files", "compare_files",
-                "create_file", "write_file",
-                "read_file", "delete_file",
+                "create_file", "write_file", "read_file",
+                "modify_file", "delete_file",
+                "rename_file", "copy_file", "move_file",
+                "create_directory", "delete_directory",
+                "list_directory", "find_files",
+                "analyze_file", "compare_files",
+                "set_permissions", "execute_file",
                 "generate_gitignore",
             ],
         }
@@ -360,6 +363,302 @@ class FileAgent(BaseAgent):
             return {"message": f"Deleted '{target.name}'", "deleted": True, "path": str(target)}
         else:
             return {"message": f"'{path}' is a directory, not a file", "deleted": False}
+
+    def handle_modify_file(
+        self,
+        path: str = "",
+        find: str = "",
+        replace: str = "",
+        insert_at_line: int = 0,
+        insert_content: str = "",
+        delete_lines: list[int] | None = None,
+        **kw: Any,
+    ) -> dict[str, Any]:
+        if not path:
+            raise ValueError("A file 'path' is required")
+
+        target = Path(path).resolve()
+        if not target.exists():
+            raise ValueError(f"File '{path}' does not exist")
+        if not target.is_file():
+            raise ValueError(f"'{path}' is not a file")
+
+        content = target.read_text(encoding="utf-8")
+        lines = content.split("\n")
+        changes: list[str] = []
+
+        if find and replace is not None:
+            count = content.count(find)
+            if count == 0:
+                return {
+                    "message": f"Pattern not found in '{target.name}'",
+                    "modified": False,
+                    "path": str(target),
+                }
+            content = content.replace(find, replace)
+            lines = content.split("\n")
+            changes.append(f"Replaced {count} occurrence(s)")
+
+        if insert_at_line and insert_content:
+            idx = max(0, min(insert_at_line - 1, len(lines)))
+            new_lines = insert_content.split("\n")
+            lines = lines[:idx] + new_lines + lines[idx:]
+            content = "\n".join(lines)
+            changes.append(f"Inserted {len(new_lines)} line(s) at line {insert_at_line}")
+
+        if delete_lines:
+            to_delete = set(delete_lines)
+            lines = [l for i, l in enumerate(lines, 1) if i not in to_delete]
+            content = "\n".join(lines)
+            changes.append(f"Deleted {len(to_delete)} line(s)")
+
+        target.write_text(content, encoding="utf-8")
+
+        return {
+            "message": f"Modified '{target.name}': {'; '.join(changes)}",
+            "modified": True,
+            "path": str(target),
+            "changes": changes,
+            "total_lines": len(lines),
+        }
+
+    def handle_rename_file(
+        self,
+        path: str = "",
+        new_name: str = "",
+        **kw: Any,
+    ) -> dict[str, Any]:
+        if not path or not new_name:
+            raise ValueError("Both 'path' and 'new_name' are required")
+
+        source = Path(path).resolve()
+        if not source.exists():
+            raise ValueError(f"'{path}' does not exist")
+
+        destination = source.parent / new_name
+        if destination.exists():
+            return {
+                "message": f"'{new_name}' already exists in the same directory",
+                "renamed": False,
+            }
+
+        source.rename(destination)
+
+        return {
+            "message": f"Renamed '{source.name}' to '{new_name}'",
+            "renamed": True,
+            "old_path": str(source),
+            "new_path": str(destination),
+        }
+
+    def handle_copy_file(
+        self,
+        source: str = "",
+        destination: str = "",
+        **kw: Any,
+    ) -> dict[str, Any]:
+        import shutil
+
+        if not source or not destination:
+            raise ValueError("Both 'source' and 'destination' are required")
+
+        src = Path(source).resolve()
+        if not src.exists():
+            raise ValueError(f"Source '{source}' does not exist")
+
+        dst = Path(destination).resolve()
+        dst.parent.mkdir(parents=True, exist_ok=True)
+
+        if src.is_dir():
+            shutil.copytree(str(src), str(dst), dirs_exist_ok=True)
+        else:
+            shutil.copy2(str(src), str(dst))
+
+        return {
+            "message": f"Copied '{src.name}' to '{dst}'",
+            "copied": True,
+            "source": str(src),
+            "destination": str(dst),
+        }
+
+    def handle_move_file(
+        self,
+        source: str = "",
+        destination: str = "",
+        **kw: Any,
+    ) -> dict[str, Any]:
+        import shutil
+
+        if not source or not destination:
+            raise ValueError("Both 'source' and 'destination' are required")
+
+        src = Path(source).resolve()
+        if not src.exists():
+            raise ValueError(f"Source '{source}' does not exist")
+
+        dst = Path(destination).resolve()
+        dst.parent.mkdir(parents=True, exist_ok=True)
+
+        shutil.move(str(src), str(dst))
+
+        return {
+            "message": f"Moved '{src.name}' to '{dst}'",
+            "moved": True,
+            "source": str(src),
+            "destination": str(dst),
+        }
+
+    def handle_create_directory(
+        self,
+        path: str = "",
+        **kw: Any,
+    ) -> dict[str, Any]:
+        if not path:
+            raise ValueError("A directory 'path' is required")
+
+        target = Path(path).resolve()
+        if target.exists():
+            return {
+                "message": f"Directory '{path}' already exists",
+                "created": False,
+                "path": str(target),
+            }
+
+        target.mkdir(parents=True, exist_ok=True)
+
+        return {
+            "message": f"Directory '{target.name}' created",
+            "created": True,
+            "path": str(target),
+        }
+
+    def handle_delete_directory(
+        self,
+        path: str = "",
+        force: bool = False,
+        **kw: Any,
+    ) -> dict[str, Any]:
+        import shutil
+
+        if not path:
+            raise ValueError("A directory 'path' is required")
+
+        target = Path(path).resolve()
+        if not target.exists():
+            return {"message": f"Directory '{path}' does not exist", "deleted": False}
+        if not target.is_dir():
+            return {"message": f"'{path}' is not a directory", "deleted": False}
+
+        children = list(target.iterdir())
+        if children and not force:
+            return {
+                "message": f"Directory '{target.name}' is not empty ({len(children)} items). Set force=true to delete.",
+                "deleted": False,
+                "item_count": len(children),
+            }
+
+        shutil.rmtree(str(target))
+
+        return {
+            "message": f"Deleted directory '{target.name}'",
+            "deleted": True,
+            "path": str(target),
+        }
+
+    def handle_set_permissions(
+        self,
+        path: str = "",
+        mode: str = "",
+        **kw: Any,
+    ) -> dict[str, Any]:
+        if not path or not mode:
+            raise ValueError("Both 'path' and 'mode' (e.g. '755') are required")
+
+        target = Path(path).resolve()
+        if not target.exists():
+            raise ValueError(f"'{path}' does not exist")
+
+        try:
+            octal_mode = int(mode, 8)
+        except ValueError:
+            raise ValueError(f"Invalid mode '{mode}'. Use octal format like '755' or '644'")
+
+        os.chmod(str(target), octal_mode)
+
+        return {
+            "message": f"Permissions set to {mode} on '{target.name}'",
+            "path": str(target),
+            "mode": mode,
+        }
+
+    def handle_execute_file(
+        self,
+        path: str = "",
+        args: list[str] | None = None,
+        timeout: int = 30,
+        **kw: Any,
+    ) -> dict[str, Any]:
+        import subprocess
+
+        if not path:
+            raise ValueError("A file 'path' is required")
+
+        target = Path(path).resolve()
+        if not target.exists():
+            raise ValueError(f"File '{path}' does not exist")
+
+        ext = target.suffix.lower()
+        cmd: list[str] = []
+
+        if ext == ".py":
+            cmd = ["python3", str(target)]
+        elif ext == ".sh" or ext == ".bash":
+            cmd = ["bash", str(target)]
+        elif ext == ".js":
+            cmd = ["node", str(target)]
+        elif ext == ".ts":
+            cmd = ["npx", "ts-node", str(target)]
+        else:
+            if os.access(str(target), os.X_OK):
+                cmd = [str(target)]
+            else:
+                return {
+                    "message": f"Cannot determine how to execute '{target.name}' (ext: {ext})",
+                    "executed": False,
+                }
+
+        if args:
+            cmd.extend(args)
+
+        try:
+            result = subprocess.run(
+                cmd,
+                capture_output=True,
+                text=True,
+                timeout=timeout,
+                cwd=str(target.parent),
+            )
+
+            return {
+                "message": f"Executed '{target.name}' (exit code: {result.returncode})",
+                "executed": True,
+                "exit_code": result.returncode,
+                "stdout": result.stdout[:5000] if result.stdout else "",
+                "stderr": result.stderr[:2000] if result.stderr else "",
+                "success": result.returncode == 0,
+            }
+
+        except subprocess.TimeoutExpired:
+            return {
+                "message": f"Execution timed out after {timeout}s",
+                "executed": False,
+                "timeout": True,
+            }
+        except FileNotFoundError as exc:
+            return {
+                "message": f"Runtime not found: {exc}",
+                "executed": False,
+            }
 
     def handle_generate_gitignore(
         self,
