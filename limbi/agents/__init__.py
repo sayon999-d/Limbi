@@ -54,7 +54,7 @@ class BaseAgent(ABC):
                 success=False,
                 agent=self.agent_name,
                 action=action,
-                error="Agent execution failed",
+                error=f"{type(exc).__name__}: {exc}",
             )
 
     @property

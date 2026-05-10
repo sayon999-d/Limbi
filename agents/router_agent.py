@@ -519,7 +519,7 @@ class RouterAgent(BaseAgent):
 
         detected: dict[str, float] = {}
         for category, keywords in categories.items():
-            score = sum(0.2 for kw in keywords if kw in query_lower)
+            score = sum(0.2 for keyword in keywords if keyword in query_lower)
             if score > 0:
                 detected[category] = round(min(score, 1.0), 2)
 

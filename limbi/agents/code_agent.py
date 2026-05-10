@@ -167,6 +167,39 @@ class CodeAgent(BaseAgent):
             "total_tools": len(_TOOL_REGISTRY),
         }
 
+    def handle_write_to_file(
+        self,
+        path: str = "",
+        content: str = "",
+        language: str = "",
+        overwrite: bool = True,
+        **kw: Any,
+    ) -> dict[str, Any]:
+        if not path:
+            raise ValueError("'path' is required")
+        if not content:
+            raise ValueError("'content' is required")
+
+        from pathlib import Path as P
+        target = P(path).resolve()
+        target.parent.mkdir(parents=True, exist_ok=True)
+
+        if target.exists() and not overwrite:
+            return {
+                "message": f"File '{path}' already exists. Set overwrite=true to replace.",
+                "written": False,
+            }
+
+        target.write_text(content, encoding="utf-8")
+
+        return {
+            "message": f"Wrote '{target.name}' ({len(content)} chars, {len(content.splitlines())} lines)",
+            "written": True,
+            "path": str(target),
+            "language": language or target.suffix.lstrip("."),
+            "lines": len(content.splitlines()),
+        }
+
     def handle_list_tools(self, **kw: Any) -> dict[str, Any]:
 
         return {
