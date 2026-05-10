@@ -22,7 +22,7 @@ def _print_banner(console):
 
     banner = Text()
     banner.append("Limbi", style="bold bright_cyan")
-    banner.append(" v1.0.4", style="dim")
+    banner.append(" v1.0.5", style="dim")
     banner.append(" - Omni-Agent Orchestrator\n")
     banner.append("Type your prompt, or ", style="dim")
     banner.append("/help", style="bold green")
@@ -201,6 +201,19 @@ def _repl(orchestrator, console):
                 orchestrator.clear_history()
                 console.print("History cleared.")
                 continue
+            if cmd in ("/trust",):
+                from limbi.workspace_trust import get_trust_level, list_trusted_workspaces
+                level = get_trust_level()
+                if level:
+                    style = "green" if level == "full" else "cyan" if level == "readonly" else "red"
+                    console.print(f"  Workspace trust: [{style}]{level}[/]")
+                else:
+                    console.print("  Workspace trust: [yellow]not set[/]")
+                trusted = list_trusted_workspaces()
+                if trusted:
+                    console.print(f"  [dim]Trusted workspaces: {len(trusted)}[/]")
+                console.print()
+                continue
             if cmd in ("/help", "/h"):
                 console.print(
                     Markdown(
@@ -209,11 +222,14 @@ def _repl(orchestrator, console):
 |---------|-------------|
 | `/agents` | List all registered agents |
 | `/providers` | Show supported LLM providers |
+| `/trust` | Show workspace trust status |
 | `/clear` | Clear conversation history |
 | `/help` | Show this help |
 | `/quit` | Exit Limbi |
 
 Type a natural-language prompt to talk to Limbi.
+
+**CLI Flags:** `--trust-reset` (re-prompt trust) · `--skip-trust` (CI mode)
 """
                     )
                 )
@@ -269,7 +285,19 @@ Type a natural-language prompt to talk to Limbi.
     default=None,
     help="Path for --generate-mcp-config (default: .vscode/mcp.json).",
 )
-@click.version_option(version="1.0.4", prog_name="limbi")
+@click.option(
+    "--trust-reset",
+    is_flag=True,
+    default=False,
+    help="Reset workspace trust and re-prompt.",
+)
+@click.option(
+    "--skip-trust",
+    is_flag=True,
+    default=False,
+    help="Skip workspace trust prompt (for CI/automation).",
+)
+@click.version_option(version="1.0.5", prog_name="limbi")
 def main(
     prompt: str | None,
     provider: str | None,
@@ -279,6 +307,8 @@ def main(
     list_providers: bool,
     generate_mcp_config: bool,
     mcp_config_path: str | None,
+    trust_reset: bool,
+    skip_trust: bool,
 ):
     console = _get_console()
 
@@ -290,6 +320,23 @@ def main(
             f"[bold]{sys.executable} -m limbi.mcp_server[/]"
         )
         return
+
+    from limbi.workspace_trust import (
+        check_workspace_trust,
+        revoke_workspace_trust,
+        list_trusted_workspaces,
+    )
+
+    if trust_reset:
+        revoke_workspace_trust()
+        console.print("[yellow]Workspace trust reset.[/] You will be prompted again.\n")
+
+    if not skip_trust and not os.environ.get("LIMBI_SKIP_TRUST"):
+        trust_level = check_workspace_trust(console=console)
+        if trust_level == "denied":
+            sys.exit(1)
+    else:
+        trust_level = "full"
 
     from limbi.workspace import init_workspace, load_config
 

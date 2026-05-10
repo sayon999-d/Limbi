@@ -148,6 +148,7 @@ import agents.sustainability_agent
 import agents.feedback_agent
 import agents.payments_agent
 import agents.context_memory_agent
+import agents.mutation_agent
 
 from agents import get_agent, list_agents
 from orchestrator import Orchestrator

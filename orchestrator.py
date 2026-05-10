@@ -41,6 +41,13 @@ You can BOTH:
 ## Available Agents & Actions
 {agent_registry}
 
+## Agent Naming Rules
+- Use only exact agent names that appear in the registry above.
+- Do not invent new agent names or generic placeholders.
+- If you need a learning-related capability, use `learning_agent`.
+- If a requested capability is not registered, say so plainly and suggest the closest existing agent.
+- When listing required or optional agents, keep the list limited to real registered agents only.
+
 ## How Delegation Works
 When you decide an action needs to be executed in the real world, include a \
 **fenced JSON block** in your response:

@@ -420,6 +420,12 @@ _ROUTING_TABLE: dict[str, dict[str, Any]] = {
         "keywords": ["government", "public sector", "grant", "constituent", "service request"],
         "confidence_boost": 0.2,
     },
+    "mutation": {
+        "agent": "mutation_agent",
+        "suggested_action": "detect_missing",
+        "keywords": ["create agent", "new agent", "missing agent", "evolve agent", "self mutation", "auto generate agent", "scaffold agent"],
+        "confidence_boost": 0.3,
+    },
 }
 
 class RouterAgent(BaseAgent):
