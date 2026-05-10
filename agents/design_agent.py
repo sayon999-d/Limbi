@@ -24,9 +24,11 @@ class DesignAgent(BaseAgent):
             ],
         }
 
-    def handle_generate_ui_brief(self, product: str = "", audience: str = "", tone: str = "clear", **kw: Any) -> dict[str, Any]:
-        if not product or not audience:
-            raise ValueError("'product' and 'audience' are required")
+    def handle_generate_ui_brief(self, product: str = "", audience: str = "", tone: str = "clear", app: str = "", name: str = "", project: str = "", target: str = "", users: str = "", **kw: Any) -> dict[str, Any]:
+        product = product or app or name or project or kw.get("title", "")
+        audience = audience or target or users or "general users"
+        if not product:
+            raise ValueError("'product' (or 'app'/'name'/'project') is required")
         return {
             "message": f"Generated UI brief for {product}",
             "brief": {

@@ -127,9 +127,15 @@ class GoalPlannerAgent(BaseAgent):
         self,
         goal: str = "",
         tasks: list[dict[str, Any]] | None = None,
+        prompt: str = "",
+        task: str = "",
+        description: str = "",
+        objective: str = "",
+        query: str = "",
         **kw: Any,
     ) -> dict[str, Any]:
 
+        goal = goal or prompt or task or description or objective or query
         if not goal:
             raise ValueError("A 'goal' is required to create a plan")
 
@@ -212,9 +218,15 @@ class GoalPlannerAgent(BaseAgent):
         self,
         goal: str = "",
         context: str = "",
+        prompt: str = "",
+        task: str = "",
+        description: str = "",
+        objective: str = "",
+        query: str = "",
         **kw: Any,
     ) -> dict[str, Any]:
 
+        goal = goal or prompt or task or description or objective or query
         templates: dict[str, list[dict[str, Any]]] = {
             "deploy": [
                 {"title": "Run tests", "agent": "devops_agent", "action": "run_pipeline", "impact_score": 0.8, "risk_score": 0.1},

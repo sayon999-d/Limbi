@@ -134,9 +134,15 @@ class CodeAgent(BaseAgent):
         description: str = "",
         code: str = "",
         test_input: str = "",
+        tool_name: str = "",
+        tool_code: str = "",
+        content: str = "",
+        source: str = "",
         **kw: Any,
     ) -> dict[str, Any]:
 
+        name = name or tool_name or kw.get("title", "")
+        code = code or tool_code or content or source
         if not name or not code:
             raise ValueError("Both 'name' and 'code' are required")
 
