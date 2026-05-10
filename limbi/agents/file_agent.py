@@ -314,6 +314,16 @@ class FileAgent(BaseAgent):
             "lines": len(content.split("\n")),
         }
 
+    def handle_write_to_file(
+        self,
+        path: str = "",
+        content: str = "",
+        append: bool = False,
+        overwrite: bool = True,
+        **kw: Any,
+    ) -> dict[str, Any]:
+        return self.handle_write_file(path=path, content=content, append=append)
+
     def handle_read_file(
         self,
         path: str = "",

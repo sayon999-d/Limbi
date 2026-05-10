@@ -446,9 +446,13 @@ class RouterAgent(BaseAgent):
         query: str = "",
         top_k: int = 3,
         threshold: float = 0.1,
+        prompt: str = "",
+        task: str = "",
+        message: str = "",
         **kw: Any,
     ) -> dict[str, Any]:
 
+        query = query or prompt or task or message
         if not query:
             raise ValueError("A 'query' is required for routing")
 
@@ -501,9 +505,13 @@ class RouterAgent(BaseAgent):
     def handle_classify_intent(
         self,
         query: str = "",
+        prompt: str = "",
+        task: str = "",
+        message: str = "",
         **kw: Any,
     ) -> dict[str, Any]:
 
+        query = query or prompt or task or message
         if not query:
             raise ValueError("A 'query' is required")
 
@@ -554,11 +562,15 @@ class RouterAgent(BaseAgent):
         self,
         query: str = "",
         agents: list[str] | None = None,
+        prompt: str = "",
+        task: str = "",
+        message: str = "",
         **kw: Any,
     ) -> dict[str, Any]:
 
+        query = query or prompt or task or message
         if not query:
-            raise ValueError("A 'query' is required")
+            raise ValueError("A 'query' (or 'prompt'/'task'/'message') is required")
 
         route_result = self.handle_route(query=query, top_k=5, threshold=0.05)
         suggestions = route_result.get("suggestions") or [route_result.get("primary_route")]
