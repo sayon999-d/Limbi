@@ -35,6 +35,8 @@ class FileAgent(BaseAgent):
             "capabilities": [
                 "list_directory", "analyze_file",
                 "find_files", "compare_files",
+                "create_file", "write_file",
+                "read_file", "delete_file",
                 "generate_gitignore",
             ],
         }
@@ -252,6 +254,112 @@ class FileAgent(BaseAgent):
             "similarity": round(len(unchanged) / max(len(set_a | set_b), 1), 2),
             "identical": lines_a == lines_b,
         }
+
+    def handle_create_file(
+        self,
+        path: str = "",
+        content: str = "",
+        overwrite: bool = False,
+        **kw: Any,
+    ) -> dict[str, Any]:
+        if not path:
+            raise ValueError("A file 'path' is required")
+
+        target = Path(path).resolve()
+
+        if target.exists() and not overwrite:
+            return {
+                "message": f"File '{path}' already exists. Set overwrite=true to replace.",
+                "created": False,
+                "path": str(target),
+            }
+
+        target.parent.mkdir(parents=True, exist_ok=True)
+        target.write_text(content, encoding="utf-8")
+
+        return {
+            "message": f"File '{target.name}' created ({len(content)} chars)",
+            "created": True,
+            "path": str(target),
+            "size": self._human_size(len(content.encode("utf-8"))),
+            "lines": len(content.split("\n")),
+        }
+
+    def handle_write_file(
+        self,
+        path: str = "",
+        content: str = "",
+        append: bool = False,
+        **kw: Any,
+    ) -> dict[str, Any]:
+        if not path:
+            raise ValueError("A file 'path' is required")
+
+        target = Path(path).resolve()
+        target.parent.mkdir(parents=True, exist_ok=True)
+
+        if append and target.exists():
+            existing = target.read_text(encoding="utf-8")
+            content = existing + content
+
+        target.write_text(content, encoding="utf-8")
+
+        return {
+            "message": f"{'Appended to' if append else 'Wrote'} '{target.name}' ({len(content)} chars)",
+            "path": str(target),
+            "size": self._human_size(len(content.encode("utf-8"))),
+            "lines": len(content.split("\n")),
+        }
+
+    def handle_read_file(
+        self,
+        path: str = "",
+        start_line: int = 0,
+        end_line: int = 0,
+        **kw: Any,
+    ) -> dict[str, Any]:
+        if not path:
+            raise ValueError("A file 'path' is required")
+
+        target = Path(path).resolve()
+        if not target.exists():
+            raise ValueError(f"File '{path}' does not exist")
+        if not target.is_file():
+            raise ValueError(f"'{path}' is not a file")
+
+        content = target.read_text(encoding="utf-8", errors="replace")
+        lines = content.split("\n")
+
+        if start_line or end_line:
+            start = max(0, start_line - 1)
+            end = end_line if end_line else len(lines)
+            lines = lines[start:end]
+            content = "\n".join(lines)
+
+        return {
+            "message": f"Read '{target.name}' ({len(lines)} lines)",
+            "path": str(target),
+            "content": content,
+            "total_lines": len(lines),
+        }
+
+    def handle_delete_file(
+        self,
+        path: str = "",
+        **kw: Any,
+    ) -> dict[str, Any]:
+        if not path:
+            raise ValueError("A file 'path' is required")
+
+        target = Path(path).resolve()
+        if not target.exists():
+            return {"message": f"File '{path}' does not exist", "deleted": False}
+
+        if target.is_file():
+            target.unlink()
+            return {"message": f"Deleted '{target.name}'", "deleted": True, "path": str(target)}
+        else:
+            return {"message": f"'{path}' is a directory, not a file", "deleted": False}
 
     def handle_generate_gitignore(
         self,
