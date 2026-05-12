@@ -562,6 +562,7 @@ python -m limbi
 Inside interactive mode:
 
 ```text
+/model
 /models
 /agent
 /agents
@@ -684,6 +685,8 @@ Use `/models` when you want to choose the provider, model, and endpoint manually
 Use `/agent` when you want to manually choose one registered agent and run one of its actions directly.
 
 These commands do not replace the normal orchestrator. They sit beside it, so you can keep the automatic workflow for normal prompts and switch to manual control only when you need it.
+
+You can use the Up and Down arrow keys to move through the `/models` and `/agent` selection screens, then press Enter to confirm.
 
 ## Security Hardening
 

@@ -122,12 +122,126 @@ def _print_banner(console):
     banner.append(" v1.1.0", style="dim")
     banner.append(" - Omni-Agent Orchestrator\n")
     banner.append("Type your prompt, or ", style="dim")
+    banner.append("/models", style="bold green")
+    banner.append(", ", style="dim")
+    banner.append("/agent", style="bold green")
+    banner.append(", or ", style="dim")
+    banner.append("/agents", style="bold green")
+    banner.append(" for menus. ", style="dim")
     banner.append("/help", style="bold green")
-    banner.append(" for commands. ", style="dim")
+    banner.append(" shows the full list. ", style="dim")
     banner.append("/quit", style="bold red")
-    banner.append(" to exit.", style="dim")
+    banner.append(" exits.\n", style="dim")
+    banner.append("Use Up/Down and Enter in selection screens.", style="dim")
 
     console.print(Panel(banner, border_style="bright_cyan", padding=(0, 2)))
+
+
+def _read_menu_key() -> str:
+    if os.name == "nt":
+        import msvcrt
+
+        while True:
+            key = msvcrt.getwch()
+            if key in ("\r", "\n"):
+                return "enter"
+            if key == "\x03":
+                raise KeyboardInterrupt
+            if key in ("\x00", "\xe0"):
+                code = msvcrt.getwch()
+                if code == "H":
+                    return "up"
+                if code == "P":
+                    return "down"
+                if code == "K":
+                    return "left"
+                if code == "M":
+                    return "right"
+                continue
+            if key == "\x1b":
+                return "escape"
+            return key
+
+    import termios
+    import tty
+
+    fd = sys.stdin.fileno()
+    old_settings = termios.tcgetattr(fd)
+    try:
+        tty.setraw(fd)
+        key = sys.stdin.read(1)
+        if key == "\x03":
+            raise KeyboardInterrupt
+        if key in ("\r", "\n"):
+            return "enter"
+        if key == "\x1b":
+            next_one = sys.stdin.read(1)
+            if next_one == "[":
+                next_two = sys.stdin.read(1)
+                if next_two == "A":
+                    return "up"
+                if next_two == "B":
+                    return "down"
+                if next_two == "C":
+                    return "right"
+                if next_two == "D":
+                    return "left"
+            return "escape"
+        return key
+    finally:
+        termios.tcsetattr(fd, termios.TCSADRAIN, old_settings)
+
+
+def _render_menu_entry(entry: Any) -> str:
+    if isinstance(entry, dict):
+        label = str(entry.get("label") or entry.get("name") or entry.get("value") or "")
+        details = str(entry.get("details") or entry.get("description") or "").strip()
+        return f"{label} - {details}" if details else label
+    if isinstance(entry, tuple) and len(entry) >= 2:
+        label = str(entry[0])
+        details = str(entry[1]).strip()
+        return f"{label} - {details}" if details else label
+    return str(entry)
+
+
+def _select_from_menu(console, title: str, choices: list[Any], default_index: int = 0, help_text: str = "") -> Any:
+    if not choices:
+        raise click.ClickException(f"No choices available for {title}.")
+
+    if not sys.stdin.isatty() or not sys.stdout.isatty():
+        console.print(f"[bold]{title}[/]")
+        for idx, choice in enumerate(choices, start=1):
+            console.print(f"  {idx}. {_render_menu_entry(choice)}")
+        selected = click.prompt(
+            "Choose number",
+            type=click.IntRange(1, len(choices)),
+            default=max(1, min(len(choices), default_index + 1)),
+        )
+        return choices[selected - 1]
+
+    index = max(0, min(default_index, len(choices) - 1))
+    while True:
+        console.clear()
+        console.print(f"[bold bright_cyan]{title}[/]")
+        if help_text:
+            console.print(f"[dim]{help_text}[/]")
+        console.print()
+        for idx, choice in enumerate(choices):
+            marker = ">" if idx == index else " "
+            style = "bold bright_green" if idx == index else "white"
+            console.print(f"[{style}]{marker} {_render_menu_entry(choice)}[/]")
+
+        key = _read_menu_key()
+        if key == "up":
+            index = (index - 1) % len(choices)
+            continue
+        if key == "down":
+            index = (index + 1) % len(choices)
+            continue
+        if key in ("enter", "right"):
+            return choices[index]
+        if key in ("q", "escape"):
+            raise click.ClickException("Selection cancelled.")
 
 
 def _print_agent_table(console):
@@ -203,6 +317,16 @@ def _print_model_choices(console):
     console.print(table)
 
 
+def _provider_choice_items() -> list[dict[str, str]]:
+    items: list[dict[str, str]] = []
+    for name, meta in _PROVIDER_CHOICES.items():
+        details = f"{meta['description']} ({meta['type']})"
+        if meta["base_url"]:
+            details += f" | {meta['base_url']}"
+        items.append({"name": name, "label": name, "details": details})
+    return items
+
+
 def _resolve_model_choice(choice: str) -> str:
     normalized = choice.strip().lower().replace(" ", "_")
     if normalized in _PROVIDER_CHOICES:
@@ -227,12 +351,15 @@ def _configure_runtime_from_model_choice(state: dict[str, Any], console) -> None
     from limbi.workspace import save_config
 
     _print_model_choices(console)
-    provider_choice = click.prompt(
+    provider_default = _resolve_model_choice(state.get("provider") or "ollama")
+    provider_item = _select_from_menu(
+        console,
         "Choose provider",
-        default=state.get("provider") or "ollama",
-        type=str,
+        _provider_choice_items(),
+        default_index=list(_PROVIDER_CHOICES).index(provider_default) if provider_default in _PROVIDER_CHOICES else 0,
+        help_text="Use Up/Down to move, then Enter to choose.",
     )
-    provider = _resolve_model_choice(provider_choice)
+    provider = provider_item["name"]
     defaults = _PROVIDER_CHOICES.get(provider, {})
     model = click.prompt(
         "Choose model",
@@ -309,26 +436,23 @@ def _run_manual_agent(console) -> None:
         return
 
     _print_agent_table(console)
-    agent_name = click.prompt("Choose agent", type=str).strip()
-    if agent_name not in agents:
-        raise click.ClickException(f"Unknown agent '{agent_name}'.")
+    agent_item = _select_from_menu(
+        console,
+        "Choose agent",
+        [{"name": name, "label": name, "details": f"{len(actions)} actions"} for name, actions in sorted(agents.items())],
+        help_text="Use Up/Down to move, then Enter to choose.",
+    )
+    agent_name = agent_item["name"]
 
     agent = get_agent(agent_name)
     actions = agent.available_actions
-    console.print(
-        Panel(
-            "\n".join(f"- {action}" for action in actions),
-            title=f"Actions for {agent_name}",
-            border_style="cyan",
-            padding=(1, 2),
-        )
+    action_item = _select_from_menu(
+        console,
+        f"Choose action for {agent_name}",
+        [{"name": action, "label": action, "details": ""} for action in actions],
+        help_text="Use Up/Down to move, then Enter to choose.",
     )
-
-    action = click.prompt("Choose action", type=str).strip()
-    if action not in actions:
-        raise click.ClickException(
-            f"Unknown action '{action}' for {agent_name}. Available: {', '.join(actions)}"
-        )
+    action = action_item["name"]
 
     params_raw = click.prompt(
         "Enter JSON parameters",
@@ -524,6 +648,9 @@ def _repl(state, console):
             if cmd in ("/agent",):
                 _run_manual_agent(console)
                 continue
+            if cmd in ("/model",):
+                _configure_runtime_from_model_choice(state, console)
+                continue
             if cmd in ("/providers",):
                 _print_providers(console)
                 continue
@@ -555,6 +682,7 @@ def _repl(state, console):
 |---------|-------------|
 | `/agents` | List all registered agents |
 | `/agent` | Manually choose an agent and run one action |
+| `/model` | Alias for `/models` |
 | `/providers` | Show supported LLM providers |
 | `/models` | Choose provider, model, and API key for the session |
 | `/trust` | Show workspace trust status |
