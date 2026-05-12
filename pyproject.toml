@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "limbi"
-version = "1.0.9"
+version = "1.1.0"
 description = "Omni-Agent Orchestration Platform — 87 specialised AI agents, any LLM provider."
 readme = "README.md"
 license = {text = "Apache-2.0"}

@@ -15,13 +15,13 @@
 
 Limbi is an omni-agent orchestration platform for running many specialized AI agents from one command, one Python API, or one MCP-compatible editor workflow.
 
-Current package version: `1.0.2`
+Current package version: `1.1.0`
 
 Current system size:
 
 - 87 registered agents
 - 410 available agent actions
-- 10 supported LLM provider modes
+- 15 supported LLM provider modes
 - CLI, Python API, FastAPI backend, MCP server, and VS Code extension support
 
 Limbi is built for developers, operators, founders, researchers, and teams who want an AI assistant that can coordinate work across engineering, infrastructure, cloud, security, data, documentation, business operations, and industry-specific tasks.
@@ -45,6 +45,8 @@ Without orchestration, the user has to copy information between prompts, tools, 
 Limbi was built to solve that coordination problem.
 
 Instead of asking one general model to do every job alone, Limbi lets the model act as an orchestrator. It can talk normally, choose the right agent, run agent actions, collect the result, store the result in shared context memory, and continue the workflow with better context.
+
+Limbi also understands more than one local model style. If you run Ollama, LM Studio, vLLM, LocalAI, KoboldCpp, llama.cpp, or any other local OpenAI-compatible server, Limbi can treat it as a local provider and skip API-key prompts when the endpoint is clearly local.
 
 ## What Problem Limbi Solves
 
@@ -156,13 +158,29 @@ The `.limbi/` workspace stores local project state. It contains configuration, a
 
 The orchestrator is the core controller. It prepares the LLM prompt, injects agent registry data, reads memory, retrieves optional RAG context, executes delegations, retries failures, and returns the final response.
 
-The provider layer hides differences between LLM vendors. Users can move between local Ollama models and hosted providers such as OpenAI, Anthropic, Google, Groq, Mistral, Azure OpenAI, Cohere, Together AI, and OpenAI-compatible endpoints.
+The provider layer hides differences between LLM vendors. Users can move between local Ollama models, local OpenAI-compatible servers such as LM Studio, vLLM, LocalAI, or KoboldCpp, and hosted providers such as OpenAI, Anthropic, Google, Groq, Mistral, Azure OpenAI, Cohere, Together AI, and OpenAI-compatible endpoints.
 
 The payload parser extracts structured agent delegation blocks from the LLM output.
 
 The agent registry maps names such as `security_agent` or `testing_agent` to Python agent classes and their available actions.
 
 The shared context memory system lets one agent's result influence later work. For example, if the security agent finds a critical issue, the DevOps agent can see that context before preparing a deployment plan.
+
+## Runtime Feedback
+
+Limbi shows live runtime feedback while a prompt is running.
+
+While it works, the terminal updates an elapsed-time indicator so you know the request is still moving.
+
+When the run finishes, Limbi prints a compact summary with:
+
+- latency
+- prompt token usage
+- completion token usage
+- total token usage
+- an estimated hallucination risk percentage
+
+That hallucination value is a heuristic, not a scientific measurement. It is there to help you spot when a prompt may need more structure or when the model seems to be stretching.
 
 ## Execution Pipeline
 
@@ -427,7 +445,7 @@ python -m limbi --list-agents
 Expected checks:
 
 - Version should print the installed Limbi version.
-- Providers should list provider names such as `ollama`, `openai`, `anthropic`, `google`, and `groq`.
+- Providers should list provider names such as `ollama`, `lmstudio`, `vllm`, `localai`, `koboldcpp`, `openai`, `anthropic`, `google`, and `groq`.
 - Agents should list 87 agents.
 
 ### 4. Choose An LLM Provider
@@ -441,6 +459,53 @@ ollama serve
 ollama pull llama3.2:3b
 export LLM_PROVIDER=ollama
 export LLM_MODEL=llama3.2:3b
+```
+
+For other local model servers, use the OpenAI-compatible provider. Limbi treats localhost endpoints as local, so it will not ask for an API key when the base URL is clearly local.
+
+For LM Studio:
+
+```bash
+python -m pip install "limbi[openai]"
+export LLM_PROVIDER=lmstudio
+export LLM_BASE_URL="http://localhost:1234/v1"
+export LLM_MODEL="local-model-name"
+```
+
+For vLLM:
+
+```bash
+python -m pip install "limbi[openai]"
+export LLM_PROVIDER=vllm
+export LLM_BASE_URL="http://localhost:8000/v1"
+export LLM_MODEL="local-model-name"
+```
+
+For LocalAI:
+
+```bash
+python -m pip install "limbi[openai]"
+export LLM_PROVIDER=localai
+export LLM_BASE_URL="http://localhost:8080/v1"
+export LLM_MODEL="local-model-name"
+```
+
+For KoboldCpp:
+
+```bash
+python -m pip install "limbi[openai]"
+export LLM_PROVIDER=koboldcpp
+export LLM_BASE_URL="http://localhost:5001/v1"
+export LLM_MODEL="local-model-name"
+```
+
+For llama.cpp:
+
+```bash
+python -m pip install "limbi[openai]"
+export LLM_PROVIDER=llamacpp
+export LLM_BASE_URL="http://localhost:8081/v1"
+export LLM_MODEL="local-model-name"
 ```
 
 For OpenAI:
@@ -497,8 +562,11 @@ python -m limbi
 Inside interactive mode:
 
 ```text
+/models
+/agent
 /agents
 /providers
+/trust
 /clear
 /help
 /quit
@@ -507,6 +575,8 @@ Inside interactive mode:
 ### 6. Understand The Workspace
 
 On first run, Limbi creates a hidden `.limbi/` folder in the current directory.
+
+The first launch also asks whether you trust the current workspace. If you deny it, Limbi exits instead of working in that folder.
 
 ```text
 .limbi/
@@ -598,14 +668,22 @@ limbi --list-agents
 | `LLM_MODEL` | `llama3.2:3b` | Model name. |
 | `LLM_API_KEY` | Empty | API key for hosted providers. |
 | `LLM_BASE_URL` | `http://localhost:11434` | Provider base URL. |
-| `LLM_TEMPERATURE` | `0.3` | Sampling temperature. |
-| `LLM_MAX_TOKENS` | `4096` | Maximum output tokens. |
+| `LLM_TEMPERATURE` | `0.2` | Sampling temperature. |
+| `LLM_MAX_TOKENS` | `2048` | Maximum output tokens. |
 | `AZURE_DEPLOYMENT` | Empty | Azure OpenAI deployment name. |
 | `AZURE_API_VERSION` | `2024-06-01` | Azure OpenAI API version. |
 | `LIMBI_API_KEY` | Empty | Optional API key required by the HTTP backend. |
 | `LIMBI_CORS_ORIGINS` | Localhost defaults | Comma-separated browser origins allowed to call the backend. |
 
 If you enable `LIMBI_API_KEY`, set the same value in the VS Code setting `limbi.apiKey` so the extension can keep working.
+
+## Manual Control Commands
+
+Use `/models` when you want to choose the provider, model, and endpoint manually for the current session. Limbi will ask for an API key only when the selected provider actually needs one.
+
+Use `/agent` when you want to manually choose one registered agent and run one of its actions directly.
+
+These commands do not replace the normal orchestrator. They sit beside it, so you can keep the automatic workflow for normal prompts and switch to manual control only when you need it.
 
 ## Security Hardening
 
@@ -616,6 +694,8 @@ Limbi now includes a few protections that matter if you run the backend beyond a
 - Audit records are sanitized before they are stored and before they are returned from the API.
 - Internal exception details are no longer echoed back to clients.
 - MCP and the VS Code extension can send the same API key so authenticated setups still work smoothly.
+- The CLI asks whether to trust a workspace before it starts work in that folder.
+- The CLI only asks for an API key when the selected provider or local endpoint truly needs one.
 
 Recommended setup for anything shared, exposed, or long-lived:
 
@@ -711,6 +791,15 @@ Instead of:
 ```bash
 limbi "prompt"
 ```
+
+### `Provider requires an API key`
+
+If you select a hosted provider, Limbi will ask for the key in the terminal and use it for that session.
+
+If you are using a local model service and Limbi still asks for a key, check that:
+
+- `LLM_PROVIDER` is set to a local provider such as `ollama`, `lmstudio`, `vllm`, `localai`, `koboldcpp`, or `llamacpp`
+- `LLM_BASE_URL` points to a local address such as `localhost` or `127.0.0.1`
 
 ### `No such option: --generate-mcp-config`
 

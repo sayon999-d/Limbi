@@ -420,6 +420,12 @@ _ROUTING_TABLE: dict[str, dict[str, Any]] = {
         "keywords": ["government", "public sector", "grant", "constituent", "service request"],
         "confidence_boost": 0.2,
     },
+    "performance": {
+        "agent": "performance_agent",
+        "suggested_action": "latency_report",
+        "keywords": ["performance", "latency", "profile", "optimize", "throughput", "slow", "benchmark"],
+        "confidence_boost": 0.25,
+    },
     "mutation": {
         "agent": "mutation_agent",
         "suggested_action": "detect_missing",

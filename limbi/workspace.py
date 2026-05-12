@@ -13,34 +13,26 @@ logger = logging.getLogger("limbi.workspace")
 WORKSPACE_DIR_NAME = ".limbi"
 
 _DEFAULT_CONFIG = {
-    "version": "1.0.2",
+    "version": "1.1.0",
     "created_at": "",
     "provider": "ollama",
     "model": "llama3.2:3b",
     "base_url": "http://localhost:11434",
-    "temperature": 0.3,
-    "max_tokens": 4096,
+    "temperature": 0.2,
+    "max_tokens": 2048,
     "session_ttl_hours": 24,
     "auto_publish_context": True,
 }
 
-_workspace_path: Path | None = None
-
 
 def get_workspace_path(base_dir: str | None = None) -> Path:
-    global _workspace_path
-
-    if _workspace_path is not None:
-        return _workspace_path
-
-    base = Path(base_dir) if base_dir else Path.cwd()
-    ws = base / WORKSPACE_DIR_NAME
-    _workspace_path = ws
-    return ws
+    base = Path(base_dir).expanduser().resolve() if base_dir else Path.cwd().resolve()
+    return base / WORKSPACE_DIR_NAME
 
 
 def init_workspace(base_dir: str | None = None) -> dict[str, Any]:
     ws = get_workspace_path(base_dir)
+    is_new = not ws.exists()
     created: list[str] = []
     existing: list[str] = []
 
@@ -89,8 +81,6 @@ def init_workspace(base_dir: str | None = None) -> dict[str, Any]:
         created.append(".limbi/.gitignore")
 
     _set_workspace_env(ws)
-
-    is_new = len(created) > 0 and ".limbi" in created[0] if created else False
 
     logger.info(
         "Workspace %s at %s (created: %d, existing: %d)",
@@ -147,7 +137,12 @@ def get_db_path(name: str) -> str:
 def workspace_info() -> dict[str, Any]:
     ws = get_workspace_path()
     if not ws.exists():
-        return {"initialized": False, "path": str(ws)}
+        return {
+            "initialized": False,
+            "path": str(ws),
+            "root_path": str(ws.parent),
+            "workspace_name": ws.name,
+        }
 
     config = load_config()
 
@@ -157,6 +152,8 @@ def workspace_info() -> dict[str, Any]:
     return {
         "initialized": True,
         "path": str(ws),
+        "root_path": str(ws.parent),
+        "workspace_name": ws.name,
         "config": config,
         "databases": [f.name for f in db_files],
         "total_db_size_mb": round(total_db_size / (1024 * 1024), 2),

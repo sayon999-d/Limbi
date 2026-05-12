@@ -11,13 +11,14 @@ from typing import Any, AsyncIterator
 from langchain_core.language_models.chat_models import BaseChatModel
 from langchain_core.messages import HumanMessage, SystemMessage, AIMessage
 
-from llm_provider import get_llm_provider, ProviderConfig
+from llm_provider import get_llm_provider, ProviderConfig, provider_requires_api_key
 
 from payload_parser import ParsedOutput, parse_llm_output
 from agents import get_agent, list_agents, AgentResult
 from vector_store import VectorStore
 from audit_log import log_execution, get_recent_executions
 from agents.context_memory_agent import publish_agent_result, get_session_context
+from limbi.runtime_metrics import build_runtime_metrics
 
 logger = logging.getLogger("limbi.orchestrator")
 
@@ -47,6 +48,11 @@ You can BOTH:
 - If you need a learning-related capability, use `learning_agent`.
 - If a requested capability is not registered, say so plainly and suggest the closest existing agent.
 - When listing required or optional agents, keep the list limited to real registered agents only.
+
+## Clarification Rules
+- If the request is underspecified, ask up to 3 short clarifying questions before acting.
+- If file paths, output targets, runtime targets, or provider details are missing, ask before guessing.
+- If a needed capability is missing, use `mutation_agent` to propose a new agent only after the user approves.
 
 ## How Delegation Works
 When you decide an action needs to be executed in the real world, include a \
@@ -83,6 +89,31 @@ When you decide an action needs to be executed in the real world, include a \
 
 {rag_context}
 """
+
+
+def _needs_clarification(user_message: str) -> list[str]:
+    text = user_message.lower().strip()
+    words = text.split()
+
+    task_verbs = {"build", "create", "make", "design", "write", "implement", "fix", "improve", "optimize", "generate"}
+    project_words = {"app", "project", "tool", "site", "api", "workflow", "agent"}
+    stack_words = {"python", "javascript", "typescript", "react", "next", "fastapi", "flask", "vue", "svelte", "cli", "desktop", "mobile"}
+
+    if any(verb in text for verb in task_verbs) and len(words) <= 14:
+        questions = [
+            "What stack or language do you want me to use?",
+            "Where should I save the output inside the workspace?",
+        ]
+        if not any(word in text for word in stack_words):
+            return questions
+
+    if any(word in text for word in project_words) and not any(word in text for word in stack_words):
+        return [
+            "Which stack should I target?",
+            "Should I create files in the current workspace root or in a subfolder?",
+        ]
+
+    return []
 
 def _build_agent_registry_text() -> str:
 
@@ -148,6 +179,44 @@ class Orchestrator:
 
     async def chat(self, user_message: str) -> dict[str, Any]:
 
+        clarification_questions = _needs_clarification(user_message)
+        if clarification_questions:
+            return {
+                "conversation_text": "\n".join(f"- {q}" for q in clarification_questions),
+                "delegations_executed": [],
+                "errors": [],
+                "metrics": {
+                    "latency_ms": 0.0,
+                    "latency_s": 0.0,
+                    "prompt_tokens": 0,
+                    "completion_tokens": 0,
+                    "total_tokens": 0,
+                    "estimated_hallucination_risk_percent": 5,
+                    "estimated_confidence_percent": 95,
+                },
+                "needs_clarification": True,
+            }
+
+        if provider_requires_api_key(self._provider.provider_name()) and not self._provider.config.api_key:
+            return {
+                "conversation_text": (
+                    f"Selected provider `{self._provider.provider_name()}` requires `LLM_API_KEY`.\n\n"
+                    "Set the key or switch to `ollama` for a local no-key setup."
+                ),
+                "delegations_executed": [],
+                "errors": ["Missing API key for selected provider"],
+                "metrics": {
+                    "latency_ms": 0.0,
+                    "latency_s": 0.0,
+                    "prompt_tokens": 0,
+                    "completion_tokens": 0,
+                    "total_tokens": 0,
+                    "estimated_hallucination_risk_percent": 8,
+                    "estimated_confidence_percent": 92,
+                },
+                "requires_api_key": True,
+            }
+
         llm = self._ensure_llm()
 
         rag_context = self._vector_store.get_context_string(user_message)
@@ -170,6 +239,7 @@ class Orchestrator:
         messages.extend(self._history)
         messages.append(HumanMessage(content=user_message))
 
+        started = time.perf_counter()
         try:
             response = await asyncio.to_thread(llm.invoke, messages)
             raw_text: str = response.content
@@ -182,6 +252,15 @@ class Orchestrator:
                 ),
                 "delegations_executed": [],
                 "errors": ["LLM provider unavailable"],
+                "metrics": {
+                    "latency_ms": round((time.perf_counter() - started) * 1000, 1),
+                    "latency_s": round(time.perf_counter() - started, 2),
+                    "prompt_tokens": 0,
+                    "completion_tokens": 0,
+                    "total_tokens": 0,
+                    "estimated_hallucination_risk_percent": 95,
+                    "estimated_confidence_percent": 5,
+                },
             }
 
         parsed: ParsedOutput = parse_llm_output(raw_text)
@@ -204,13 +283,70 @@ class Orchestrator:
         self._history.append(AIMessage(content=raw_text))
         await self._manage_history()
 
+        elapsed_ms = (time.perf_counter() - started) * 1000
+        metrics = build_runtime_metrics(
+            response=response,
+            prompt_text=user_message,
+            raw_text=raw_text,
+            parsed_errors=parsed.parse_errors,
+            delegations=delegation_results,
+            elapsed_ms=elapsed_ms,
+            clarification_requested=False,
+        )
+
         return {
             "conversation_text": parsed.conversation_text,
             "delegations_executed": delegation_results,
             "errors": parsed.parse_errors,
+            "metrics": metrics,
         }
 
     async def chat_stream(self, user_message: str) -> AsyncIterator[dict[str, Any]]:
+
+        clarification_questions = _needs_clarification(user_message)
+        if clarification_questions:
+            yield {
+                "type": "done",
+                "conversation_text": "\n".join(f"- {q}" for q in clarification_questions),
+                "delegations": [],
+                "errors": [],
+                "metrics": {
+                    "latency_ms": 0.0,
+                    "latency_s": 0.0,
+                    "prompt_tokens": 0,
+                    "completion_tokens": 0,
+                    "total_tokens": 0,
+                    "estimated_hallucination_risk_percent": 5,
+                    "estimated_confidence_percent": 95,
+                },
+                "needs_clarification": True,
+            }
+            return
+
+        if provider_requires_api_key(self._provider.provider_name()) and not self._provider.config.api_key:
+            yield {
+                "type": "error",
+                "content": (
+                    f"Selected provider `{self._provider.provider_name()}` requires `LLM_API_KEY`."
+                ),
+            }
+            yield {
+                "type": "done",
+                "conversation_text": "",
+                "delegations": [],
+                "errors": ["Missing API key for selected provider"],
+                "metrics": {
+                    "latency_ms": 0.0,
+                    "latency_s": 0.0,
+                    "prompt_tokens": 0,
+                    "completion_tokens": 0,
+                    "total_tokens": 0,
+                    "estimated_hallucination_risk_percent": 8,
+                    "estimated_confidence_percent": 92,
+                },
+                "requires_api_key": True,
+            }
+            return
 
         llm = self._ensure_llm()
 
@@ -232,6 +368,7 @@ class Orchestrator:
         messages.append(HumanMessage(content=user_message))
 
         full_text = ""
+        started = time.perf_counter()
         try:
             async for chunk in llm.astream(messages):
                 token = chunk.content
@@ -260,11 +397,22 @@ class Orchestrator:
         self._history.append(AIMessage(content=full_text))
         await self._manage_history()
 
+        metrics = build_runtime_metrics(
+            response=None,
+            prompt_text=user_message,
+            raw_text=full_text,
+            parsed_errors=parsed.parse_errors,
+            delegations=delegation_results,
+            elapsed_ms=(time.perf_counter() - started) * 1000,
+            clarification_requested=False,
+        )
+
         yield {
             "type": "done",
             "conversation_text": parsed.conversation_text,
             "delegations": delegation_results,
             "errors": parsed.parse_errors,
+            "metrics": metrics,
         }
 
     async def _execute_delegations_parallel(

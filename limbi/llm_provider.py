@@ -19,8 +19,8 @@ class ProviderConfig:
     model: str = ""
     base_url: str = ""
     api_key: str = ""
-    temperature: float = 0.3
-    max_tokens: int = 4096
+    temperature: float = 0.2
+    max_tokens: int = 2048
 
     azure_deployment: str = ""
     azure_api_version: str = "2024-06-01"
@@ -33,8 +33,8 @@ class ProviderConfig:
             model=os.getenv("LLM_MODEL", os.getenv("OLLAMA_MODEL", "llama3.2:3b")),
             base_url=os.getenv("LLM_BASE_URL", os.getenv("OLLAMA_BASE_URL", "http://localhost:11434")),
             api_key=os.getenv("LLM_API_KEY", ""),
-            temperature=float(os.getenv("LLM_TEMPERATURE", "0.3")),
-            max_tokens=int(os.getenv("LLM_MAX_TOKENS", "4096")),
+            temperature=float(os.getenv("LLM_TEMPERATURE", "0.2")),
+            max_tokens=int(os.getenv("LLM_MAX_TOKENS", "2048")),
             azure_deployment=os.getenv("AZURE_DEPLOYMENT", ""),
             azure_api_version=os.getenv("AZURE_API_VERSION", "2024-06-01"),
         )
@@ -226,6 +226,9 @@ _PROVIDER_MAP: dict[str, type[BaseLLMProvider]] = {
     "openai_compatible": OpenAICompatibleProvider,
     "lmstudio": OpenAICompatibleProvider,
     "vllm": OpenAICompatibleProvider,
+    "localai": OpenAICompatibleProvider,
+    "koboldcpp": OpenAICompatibleProvider,
+    "llamacpp": OpenAICompatibleProvider,
 }
 
 def get_llm_provider(config: ProviderConfig | None = None) -> BaseLLMProvider:
@@ -247,3 +250,42 @@ def get_llm_provider(config: ProviderConfig | None = None) -> BaseLLMProvider:
 def list_providers() -> list[str]:
 
     return sorted(set(cls.__name__ for cls in _PROVIDER_MAP.values()))
+
+
+_LOCAL_PROVIDER_NAMES = {
+    "ollama",
+    "lmstudio",
+    "vllm",
+    "localai",
+    "koboldcpp",
+    "llamacpp",
+}
+
+
+def _is_local_base_url(base_url: str | None) -> bool:
+    if not base_url:
+        return False
+    normalized = base_url.strip().lower()
+    return any(
+        token in normalized
+        for token in (
+            "localhost",
+            "127.0.0.1",
+            "0.0.0.0",
+            "::1",
+            "file://",
+        )
+    )
+
+
+def provider_is_local(provider_name: str, base_url: str | None = None) -> bool:
+    name = (provider_name or "").lower().strip()
+    if name in _LOCAL_PROVIDER_NAMES:
+        return True
+    if name in {"openai_compatible", "azure_openai"} and _is_local_base_url(base_url):
+        return True
+    return _is_local_base_url(base_url)
+
+
+def provider_requires_api_key(provider_name: str, base_url: str | None = None) -> bool:
+    return not provider_is_local(provider_name, base_url)
