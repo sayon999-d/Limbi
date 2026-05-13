@@ -57,9 +57,24 @@ class FileAgent(BaseAgent):
             kw.get("output_path"),
             kw.get("destination"),
         )
+        workspace_root = Path(
+            os.getenv("LIMBI_WORKSPACE_ROOT")
+            or os.getenv("WORKSPACE_ROOT")
+            or Path.cwd()
+        ).expanduser().resolve()
         for candidate in candidates:
             if isinstance(candidate, str) and candidate.strip():
-                return candidate.strip()
+                raw = Path(candidate.strip()).expanduser()
+                raw_text = str(raw)
+                if raw_text == "/workspace" or raw_text.startswith("/workspace/"):
+                    suffix = raw_text.removeprefix("/workspace").lstrip("/")
+                    return str((workspace_root / suffix).resolve())
+                if raw_text == "/workspaces" or raw_text.startswith("/workspaces/"):
+                    suffix = raw_text.removeprefix("/workspaces").lstrip("/")
+                    return str((workspace_root / suffix).resolve())
+                if raw.is_absolute():
+                    return str(raw.resolve())
+                return str((workspace_root / raw).resolve())
         raise ValueError("A file 'path' is required")
 
     def handle_list_directory(

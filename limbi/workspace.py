@@ -100,6 +100,8 @@ def init_workspace(base_dir: str | None = None) -> dict[str, Any]:
 
 def _set_workspace_env(ws: Path) -> None:
     defaults = {
+        "LIMBI_WORKSPACE_ROOT": str(ws.parent),
+        "WORKSPACE_ROOT": str(ws.parent),
         "AUDIT_DB_PATH": str(ws / "audit.db"),
         "MEMORY_DB_PATH": str(ws / "memory.db"),
         "CONTEXT_MEMORY_DB_PATH": str(ws / "context_memory.db"),
