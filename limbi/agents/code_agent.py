@@ -167,6 +167,23 @@ class CodeAgent(BaseAgent):
             "total_tools": len(_TOOL_REGISTRY),
         }
 
+    def _resolve_path(self, path: str = "", **kw: Any) -> str:
+        candidates = (
+            path,
+            kw.get("path"),
+            kw.get("file_path"),
+            kw.get("filepath"),
+            kw.get("file_name"),
+            kw.get("filename"),
+            kw.get("name"),
+            kw.get("target_path"),
+            kw.get("output_path"),
+        )
+        for candidate in candidates:
+            if isinstance(candidate, str) and candidate.strip():
+                return candidate.strip()
+        raise ValueError("'path' is required")
+
     def handle_write_to_file(
         self,
         path: str = "",
@@ -175,8 +192,7 @@ class CodeAgent(BaseAgent):
         overwrite: bool = True,
         **kw: Any,
     ) -> dict[str, Any]:
-        if not path:
-            raise ValueError("'path' is required")
+        path = self._resolve_path(path, **kw)
         if not content:
             raise ValueError("'content' is required")
 

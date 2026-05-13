@@ -44,6 +44,24 @@ class FileAgent(BaseAgent):
             ],
         }
 
+    def _resolve_path(self, path: str = "", **kw: Any) -> str:
+        candidates = (
+            path,
+            kw.get("path"),
+            kw.get("file_path"),
+            kw.get("filepath"),
+            kw.get("file_name"),
+            kw.get("filename"),
+            kw.get("name"),
+            kw.get("target_path"),
+            kw.get("output_path"),
+            kw.get("destination"),
+        )
+        for candidate in candidates:
+            if isinstance(candidate, str) and candidate.strip():
+                return candidate.strip()
+        raise ValueError("A file 'path' is required")
+
     def handle_list_directory(
         self,
         path: str = ".",
@@ -265,9 +283,7 @@ class FileAgent(BaseAgent):
         overwrite: bool = False,
         **kw: Any,
     ) -> dict[str, Any]:
-        if not path:
-            raise ValueError("A file 'path' is required")
-
+        path = self._resolve_path(path, **kw)
         target = Path(path).resolve()
 
         if target.exists() and not overwrite:
@@ -295,9 +311,7 @@ class FileAgent(BaseAgent):
         append: bool = False,
         **kw: Any,
     ) -> dict[str, Any]:
-        if not path:
-            raise ValueError("A file 'path' is required")
-
+        path = self._resolve_path(path, **kw)
         target = Path(path).resolve()
         target.parent.mkdir(parents=True, exist_ok=True)
 
@@ -322,7 +336,23 @@ class FileAgent(BaseAgent):
         overwrite: bool = True,
         **kw: Any,
     ) -> dict[str, Any]:
-        return self.handle_write_file(path=path, content=content, append=append)
+        return self.handle_write_file(path=path, content=content, append=append, **kw)
+
+    def handle_save(
+        self,
+        path: str = "",
+        content: str = "",
+        append: bool = False,
+        overwrite: bool = True,
+        **kw: Any,
+    ) -> dict[str, Any]:
+        return self.handle_write_to_file(
+            path=path,
+            content=content,
+            append=append,
+            overwrite=overwrite,
+            **kw,
+        )
 
     def handle_read_file(
         self,
