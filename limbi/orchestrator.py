@@ -50,8 +50,14 @@ You can BOTH:
 - When listing required or optional agents, keep the list limited to real registered agents only.
 
 ## Clarification Rules
-- If the request is underspecified, ask up to 3 short clarifying questions before acting.
-- If file paths, output targets, runtime targets, or provider details are missing, ask before guessing.
+- Ask clarifying questions only when the request is genuinely ambiguous and you cannot
+  safely continue with sensible defaults.
+- Prefer to act with the current workspace, current provider, and a reasonable stack
+  choice when the user has already stated a concrete task.
+- Do not interrupt a build, edit, or repair task just to ask for stack preferences
+  unless the choice materially changes the work.
+- If file paths, output targets, runtime targets, or provider details are missing and
+  there is no safe default, ask a single focused question instead of multiple questions.
 - If a needed capability is missing, use `mutation_agent` to propose a new agent only after the user approves.
 
 ## How Delegation Works
@@ -96,22 +102,29 @@ def _needs_clarification(user_message: str) -> list[str]:
     words = text.split()
 
     task_verbs = {"build", "create", "make", "design", "write", "implement", "fix", "improve", "optimize", "generate"}
-    project_words = {"app", "project", "tool", "site", "api", "workflow", "agent"}
-    stack_words = {"python", "javascript", "typescript", "react", "next", "fastapi", "flask", "vue", "svelte", "cli", "desktop", "mobile"}
+    vague_words = {"something", "stuff", "thing", "things", "whatever", "some", "it", "this", "that", "there", "here"}
+    path_words = {"path", "file", "folder", "directory", "save", "write", "output"}
+    explicit_targets = {
+        "app", "project", "tool", "site", "api", "workflow", "agent",
+        "calculator", "dashboard", "cli", "script", "page", "server",
+        "component", "module", "service", "utility",
+    }
 
-    if any(verb in text for verb in task_verbs) and len(words) <= 14:
-        questions = [
-            "What stack or language do you want me to use?",
-            "Where should I save the output inside the workspace?",
-        ]
-        if not any(word in text for word in stack_words):
-            return questions
+    has_task = any(verb in text for verb in task_verbs)
+    has_explicit_target = any(word in text for word in explicit_targets)
+    has_vague_language = any(word in text for word in vague_words)
+    has_path_context = any(word in text for word in path_words)
 
-    if any(word in text for word in project_words) and not any(word in text for word in stack_words):
-        return [
-            "Which stack should I target?",
-            "Should I create files in the current workspace root or in a subfolder?",
-        ]
+    if not has_task:
+        if has_vague_language and len(words) <= 8:
+            return ["What exactly would you like me to do?"]
+        return []
+
+    if len(words) <= 8 and not has_explicit_target:
+        return ["What exact output should I create or change?"]
+
+    if has_path_context and not has_explicit_target and len(words) <= 16:
+        return ["Where should I place the output in the workspace?"]
 
     return []
 
