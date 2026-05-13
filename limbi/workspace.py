@@ -13,7 +13,7 @@ logger = logging.getLogger("limbi.workspace")
 WORKSPACE_DIR_NAME = ".limbi"
 
 _DEFAULT_CONFIG = {
-    "version": "1.4.0",
+    "version": "1.4.1",
     "created_at": "",
     "provider": "ollama",
     "model": "llama3.2:3b",
