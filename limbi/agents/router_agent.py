@@ -198,6 +198,12 @@ _ROUTING_TABLE: dict[str, dict[str, Any]] = {
         "keywords": ["browser", "website", "webpage", "form", "link", "crawl"],
         "confidence_boost": 0.2,
     },
+    "web_scrape": {
+        "agent": "web_scraping_agent",
+        "suggested_action": "summarize_page",
+        "keywords": ["scrape", "scraping", "web scrape", "web scraping", "crawl page", "extract website"],
+        "confidence_boost": 0.25,
+    },
     "os": {
         "agent": "os_agent",
         "suggested_action": "system_info",

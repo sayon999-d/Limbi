@@ -85,6 +85,7 @@ import agents.scheduler_agent
 import agents.file_agent
 import agents.swarm_agent
 import agents.browser_agent
+import agents.web_scraping_agent
 import agents.os_agent
 import agents.tool_builder_agent
 import agents.integration_agent

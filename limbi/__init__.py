@@ -1,7 +1,7 @@
 
 from __future__ import annotations
 
-__version__ = "1.2.0"
+__version__ = "1.3.0"
 __author__ = "Sayon Manna"
 
 from limbi.agents import (  
@@ -51,6 +51,7 @@ from limbi.agents import (
 
 from limbi.agents import (  
     browser_agent,
+    web_scraping_agent,
     os_agent,
     tool_builder_agent,
     integration_agent,

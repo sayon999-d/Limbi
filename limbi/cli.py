@@ -10,7 +10,7 @@ from pathlib import Path
 from typing import Any
 
 import click
-from limbi.llm_provider import provider_requires_api_key
+from limbi.llm_provider import list_available_models, provider_requires_api_key
 
 
 _PROVIDER_CHOICES = {
@@ -19,6 +19,30 @@ _PROVIDER_CHOICES = {
         "base_url": "http://localhost:11434",
         "type": "local",
         "description": "Local models via Ollama",
+    },
+    "openrouter": {
+        "model": "openai/gpt-4o",
+        "base_url": "https://openrouter.ai/api/v1",
+        "type": "remote",
+        "description": "OpenRouter model router",
+    },
+    "huggingface": {
+        "model": "meta-llama/Llama-3.1-8B-Instruct",
+        "base_url": "https://router.huggingface.co/v1",
+        "type": "remote",
+        "description": "Hugging Face Inference Providers",
+    },
+    "chutes": {
+        "model": "meta-llama/Llama-3.1-8B-Instruct",
+        "base_url": "https://llm.chutes.ai/v1",
+        "type": "remote",
+        "description": "Chutes open-source model router",
+    },
+    "bytez": {
+        "model": "meta-llama/Llama-3.1-8B-Instruct",
+        "base_url": "https://api.bytez.com/models/v2/openai/v1",
+        "type": "remote",
+        "description": "Bytez unified model API",
     },
     "lmstudio": {
         "model": "default",
@@ -118,23 +142,23 @@ def _print_banner(console):
     from rich.text import Text
 
     banner = Text()
-    banner.append("Limbi", style="bold bright_cyan")
-    banner.append(" v1.2.0", style="dim")
+    banner.append("Limbi", style="bold orange1")
+    banner.append(" v1.3.0", style="bold white")
     banner.append(" - Omni-Agent Orchestrator\n")
-    banner.append("Type your prompt, or ", style="dim")
-    banner.append("/models", style="bold green")
-    banner.append(", ", style="dim")
-    banner.append("/agent", style="bold green")
-    banner.append(", or ", style="dim")
-    banner.append("/agents", style="bold green")
-    banner.append(" for menus. ", style="dim")
-    banner.append("/help", style="bold green")
-    banner.append(" shows the full list. ", style="dim")
-    banner.append("/quit", style="bold red")
-    banner.append(" exits.\n", style="dim")
-    banner.append("Use Up/Down and Enter in selection screens.", style="dim")
+    banner.append("Type your prompt, or ", style="white")
+    banner.append("/models", style="bold orange1")
+    banner.append(", ", style="white")
+    banner.append("/agent", style="bold orange1")
+    banner.append(", or ", style="white")
+    banner.append("/agents", style="bold orange1")
+    banner.append(" for menus. ", style="white")
+    banner.append("/help", style="bold orange1")
+    banner.append(" shows the full list. ", style="white")
+    banner.append("/quit", style="bold orange1")
+    banner.append(" exits.\n", style="white")
+    banner.append("Use Up/Down and Enter in selection screens.", style="white")
 
-    console.print(Panel(banner, border_style="bright_cyan", padding=(0, 2)))
+    console.print(Panel(banner, border_style="orange1", padding=(0, 2)))
 
 
 def _read_menu_key() -> str:
@@ -252,14 +276,14 @@ def _print_agent_table(console):
     agents = list_agents()
     table = Table(
         title="Registered Agents",
-        title_style="bold bright_cyan",
-        border_style="bright_cyan",
+        title_style="bold orange1",
+        border_style="orange1",
         show_lines=False,
         padding=(0, 1),
     )
     table.add_column("Agent", style="bold white", min_width=25)
-    table.add_column("Actions", style="cyan")
-    table.add_column("#", justify="right", style="green")
+    table.add_column("Actions", style="orange1")
+    table.add_column("#", justify="right", style="white")
 
     for name, actions in sorted(agents.items()):
         table.add_row(
@@ -280,7 +304,7 @@ def _print_providers(console):
 
     table = Table(
         title="Supported Providers",
-        border_style="bright_cyan",
+        border_style="orange1",
         show_lines=False,
     )
     table.add_column("Provider", style="bold white")
@@ -300,11 +324,11 @@ def _print_model_choices(console):
 
     table = Table(
         title="Model / Provider Choices",
-        border_style="bright_cyan",
+        border_style="orange1",
         show_lines=False,
     )
     table.add_column("Provider", style="bold white")
-    table.add_column("Default Model", style="cyan")
+    table.add_column("Default Model", style="orange1")
     table.add_column("Endpoint", style="dim")
     table.add_column("Key", style="dim")
     for provider, meta in _PROVIDER_CHOICES.items():
@@ -361,11 +385,6 @@ def _configure_runtime_from_model_choice(state: dict[str, Any], console) -> None
     )
     provider = provider_item["name"]
     defaults = _PROVIDER_CHOICES.get(provider, {})
-    model = click.prompt(
-        "Choose model",
-        default=defaults.get("model") or state.get("model") or "llama3.2:3b",
-        type=str,
-    ).strip()
     base_url = click.prompt(
         "Choose base URL",
         default=defaults.get("base_url") or state.get("base_url") or "",
@@ -384,6 +403,26 @@ def _configure_runtime_from_model_choice(state: dict[str, Any], console) -> None
             raise click.ClickException("API key is required for the selected provider.")
     if not provider_requires_api_key(provider, base_url):
         api_key = ""
+
+    catalog_models = list_available_models(provider, api_key=api_key, base_url=base_url)
+    if catalog_models:
+        preferred_model = state.get("model") if state.get("model") in catalog_models else defaults.get("model")
+        if preferred_model not in catalog_models:
+            preferred_model = catalog_models[0]
+        model_item = _select_from_menu(
+            console,
+            f"Choose model for {provider}",
+            [{"name": item, "label": item, "details": ""} for item in catalog_models],
+            default_index=catalog_models.index(preferred_model) if preferred_model in catalog_models else 0,
+            help_text="Use Up/Down to move, then Enter to choose.",
+        )
+        model = model_item["name"]
+    else:
+        model = click.prompt(
+            "Choose model",
+            default=defaults.get("model") or state.get("model") or "llama3.2:3b",
+            type=str,
+        ).strip()
 
     _setup_env_overrides(provider, model, api_key, base_url)
     if provider_requires_api_key(provider, base_url) and not os.environ.get("LLM_MAX_TOKENS"):
@@ -435,7 +474,6 @@ def _run_manual_agent(console) -> None:
         console.print("[yellow]No agents are registered.[/]")
         return
 
-    _print_agent_table(console)
     agent_item = _select_from_menu(
         console,
         "Choose agent",
@@ -467,7 +505,7 @@ def _run_manual_agent(console) -> None:
         Panel(
             Syntax(json.dumps(result.to_dict(), indent=2), "json", word_wrap=True),
             title=f"{agent_name}.{action}",
-            border_style="cyan" if result.success else "red",
+            border_style="orange1" if result.success else "red",
             padding=(1, 2),
         )
     )
@@ -556,7 +594,7 @@ async def _status_ticker(status, stop_event: asyncio.Event) -> None:
     started = time.perf_counter()
     while not stop_event.is_set():
         elapsed = time.perf_counter() - started
-        status.update(f"[bold cyan]Thinking... {elapsed:.1f}s[/]")
+        status.update(f"[bold orange1]Thinking... {elapsed:.1f}s[/]")
         try:
             await asyncio.sleep(0.8)
         except asyncio.CancelledError:
@@ -568,7 +606,7 @@ async def _send_message(orchestrator, message: str, console) -> None:
     from rich.panel import Panel
 
     stop_event = asyncio.Event()
-    with console.status("[bold cyan]Thinking...[/]", spinner="dots") as status:
+    with console.status("[bold orange1]Thinking...[/]", spinner="dots") as status:
         ticker = asyncio.create_task(_status_ticker(status, stop_event))
         try:
             result = await orchestrator.chat(message)
@@ -587,8 +625,8 @@ async def _send_message(orchestrator, message: str, console) -> None:
         console.print(
             Panel(
                 Markdown(text),
-                title="[bold bright_cyan]Limbi[/]",
-                border_style="bright_cyan",
+                title="[bold orange1]Limbi[/]",
+                border_style="orange1",
                 padding=(1, 2),
             )
         )
@@ -610,14 +648,18 @@ async def _send_message(orchestrator, message: str, console) -> None:
         console.print("  [yellow]WARNING: Could not fully parse the model response.[/]")
 
     if metrics:
-        metric_lines = [
-            f"Latency: [bold]{metrics.get('latency_s', 0):.2f}s[/]",
-            f"Prompt tokens: [bold]{metrics.get('prompt_tokens', 0)}[/]",
-            f"Completion tokens: [bold]{metrics.get('completion_tokens', 0)}[/]",
-            f"Total tokens: [bold]{metrics.get('total_tokens', 0)}[/]",
-            f"Estimated hallucination risk: [bold]{metrics.get('estimated_hallucination_risk_percent', 0)}%[/]",
-        ]
-        console.print(Panel("\n".join(metric_lines), title="[bold]Run Metrics[/]", border_style="cyan", padding=(1, 2)))
+        from rich.text import Text
+
+        summary = Text()
+        summary.append("hallucination: ", style="bold orange1")
+        summary.append(f"{metrics.get('estimated_hallucination_risk_percent', 0)}%", style="white")
+        summary.append("    ", style="white")
+        summary.append("latency: ", style="bold orange1")
+        summary.append(f"{metrics.get('latency_s', 0):.2f}s", style="white")
+        summary.append("    ", style="white")
+        summary.append("token usage: ", style="bold orange1")
+        summary.append(str(metrics.get('total_tokens', 0)), style="white")
+        console.print(Panel(summary, border_style="orange1", padding=(0, 1)))
 
 
 def _repl(state, console):
@@ -642,11 +684,14 @@ def _repl(state, console):
             if cmd in ("/quit", "/exit", "/q"):
                 console.print("Goodbye.")
                 break
-            if cmd in ("/agents", "/list"):
-                _print_agent_table(console)
-                continue
             if cmd in ("/agent",):
                 _run_manual_agent(console)
+                continue
+            if cmd in ("/agents",):
+                _run_manual_agent(console)
+                continue
+            if cmd in ("/list",):
+                _print_agent_table(console)
                 continue
             if cmd in ("/model",):
                 _configure_runtime_from_model_choice(state, console)
@@ -680,11 +725,12 @@ def _repl(state, console):
                         """## Commands
 | Command | Description |
 |---------|-------------|
-| `/agents` | List all registered agents |
-| `/agent` | Manually choose an agent and run one action |
+| `/agents` | Manually choose an agent and run one action |
+| `/agent` | Alias for `/agents` |
 | `/model` | Alias for `/models` |
 | `/providers` | Show supported LLM providers |
 | `/models` | Choose provider, model, and API key for the session |
+| `/list` | List all registered agents |
 | `/trust` | Show workspace trust status |
 | `/clear` | Clear conversation history |
 | `/help` | Show this help |
@@ -710,7 +756,8 @@ Type a natural-language prompt to talk to Limbi.
     default=None,
     help=(
         "LLM provider (ollama, lmstudio, vllm, localai, koboldcpp, llamacpp, "
-        "openai, anthropic, google, groq, together, mistral, azure, cohere)."
+        "openrouter, huggingface, chutes, bytez, openai, anthropic, google, "
+        "groq, together, mistral, azure, cohere)."
     ),
 )
 @click.option(
@@ -763,7 +810,7 @@ Type a natural-language prompt to talk to Limbi.
     default=False,
     help="Skip workspace trust prompt (for CI/automation).",
 )
-@click.version_option(version="1.2.0", prog_name="limbi")
+@click.version_option(version="1.3.0", prog_name="limbi")
 def main(
     prompt: str | None,
     provider: str | None,

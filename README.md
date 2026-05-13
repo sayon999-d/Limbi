@@ -8,20 +8,20 @@
   <br/><br/>
 
   [![Python 3.11+](https://img.shields.io/badge/Python-3.11%2B-3776AB?style=for-the-badge&logo=python&logoColor=white)](https://www.python.org/)
-  [![Agents](https://img.shields.io/badge/Agents-87-00B894?style=for-the-badge)](#agent-catalog)
-  [![Actions](https://img.shields.io/badge/Actions-410-0984E3?style=for-the-badge)](#agent-catalog)
+  [![Agents](https://img.shields.io/badge/Agents-89-00B894?style=for-the-badge)](#agent-catalog)
+  [![Actions](https://img.shields.io/badge/Actions-435-0984E3?style=for-the-badge)](#agent-catalog)
   [![Apache 2.0](https://img.shields.io/badge/License-Apache_2.0-6C5CE7?style=for-the-badge)](LICENSE)
 </div>
 
 Limbi is an omni-agent orchestration platform for running many specialized AI agents from one command, one Python API, or one MCP-compatible editor workflow.
 
-Current package version: `1.2.0`
+Current package version: `1.3.0`
 
 Current system size:
 
-- 87 registered agents
-- 410 available agent actions
-- 15 supported LLM provider modes
+- 89 registered agents
+- 435 available agent actions
+- 19 supported LLM provider modes
 - CLI, Python API, FastAPI backend, MCP server, and VS Code extension support
 
 Limbi is built for developers, operators, founders, researchers, and teams who want an AI assistant that can coordinate work across engineering, infrastructure, cloud, security, data, documentation, business operations, and industry-specific tasks.
@@ -47,6 +47,8 @@ Limbi was built to solve that coordination problem.
 Instead of asking one general model to do every job alone, Limbi lets the model act as an orchestrator. It can talk normally, choose the right agent, run agent actions, collect the result, store the result in shared context memory, and continue the workflow with better context.
 
 Limbi also understands more than one local model style. If you run Ollama, LM Studio, vLLM, LocalAI, KoboldCpp, llama.cpp, or any other local OpenAI-compatible server, Limbi can treat it as a local provider and skip API-key prompts when the endpoint is clearly local.
+
+Limbi also supports model routers and hosted model catalogs such as OpenRouter, Hugging Face Inference Providers, Chutes, Bytez, OpenAI, Anthropic, Google, Groq, Together AI, Mistral, Azure OpenAI, and Cohere. In `/models`, Limbi can query the provider catalog after you enter a valid key and show the model IDs you can use.
 
 ## What Problem Limbi Solves
 
@@ -158,7 +160,7 @@ The `.limbi/` workspace stores local project state. It contains configuration, a
 
 The orchestrator is the core controller. It prepares the LLM prompt, injects agent registry data, reads memory, retrieves optional RAG context, executes delegations, retries failures, and returns the final response.
 
-The provider layer hides differences between LLM vendors. Users can move between local Ollama models, local OpenAI-compatible servers such as LM Studio, vLLM, LocalAI, or KoboldCpp, and hosted providers such as OpenAI, Anthropic, Google, Groq, Mistral, Azure OpenAI, Cohere, Together AI, and OpenAI-compatible endpoints.
+The provider layer hides differences between LLM vendors. Users can move between local Ollama models, local OpenAI-compatible servers such as LM Studio, vLLM, LocalAI, KoboldCpp, or llama.cpp, remote routers such as OpenRouter, Hugging Face, Chutes, and Bytez, and hosted providers such as OpenAI, Anthropic, Google, Groq, Mistral, Azure OpenAI, Cohere, Together AI, and OpenAI-compatible endpoints.
 
 The payload parser extracts structured agent delegation blocks from the LLM output.
 
@@ -247,7 +249,7 @@ That structure makes results predictable and easy to log, summarize, and reuse.
 
 ## Agent Categories
 
-Limbi currently registers 87 agents. The exact list can be checked at any time:
+Limbi currently registers 89 agents. The exact list can be checked at any time:
 
 ```bash
 python -m limbi --list-agents
@@ -319,6 +321,7 @@ These agents support infrastructure, deployment, observability, cloud, Kubernete
 | `scheduler_agent` | Supports scheduling and calendar-style coordination. |
 | `os_agent` | Supports operating-system-oriented tasks. |
 | `browser_agent` | Supports browser-oriented tasks and web interaction workflows. |
+| `web_scraping_agent` | Fetches pages, extracts links, inspects forms, and summarizes web content. |
 | `tool_builder_agent` | Generates tool specifications and helper tooling. |
 
 ### Security, Governance, and Compliance Agents
@@ -446,7 +449,7 @@ Expected checks:
 
 - Version should print the installed Limbi version.
 - Providers should list provider names such as `ollama`, `lmstudio`, `vllm`, `localai`, `koboldcpp`, `openai`, `anthropic`, `google`, and `groq`.
-- Agents should list 87 agents.
+- Agents should list 89 agents.
 
 ### 4. Choose An LLM Provider
 
@@ -508,6 +511,42 @@ export LLM_BASE_URL="http://localhost:8081/v1"
 export LLM_MODEL="local-model-name"
 ```
 
+For OpenRouter:
+
+```bash
+python -m pip install "limbi[openai]"
+export LLM_PROVIDER=openrouter
+export LLM_MODEL="openai/gpt-4o"
+export LLM_API_KEY="your_api_key_here"
+```
+
+For Hugging Face Inference Providers:
+
+```bash
+python -m pip install "limbi[openai]"
+export LLM_PROVIDER=huggingface
+export LLM_MODEL="meta-llama/Llama-3.1-8B-Instruct"
+export LLM_API_KEY="your_api_key_here"
+```
+
+For Chutes:
+
+```bash
+python -m pip install "limbi[openai]"
+export LLM_PROVIDER=chutes
+export LLM_MODEL="meta-llama/Llama-3.1-8B-Instruct"
+export LLM_API_KEY="your_api_key_here"
+```
+
+For Bytez:
+
+```bash
+python -m pip install "limbi[openai]"
+export LLM_PROVIDER=bytez
+export LLM_MODEL="meta-llama/Llama-3.1-8B-Instruct"
+export LLM_API_KEY="your_api_key_here"
+```
+
 For OpenAI:
 
 ```bash
@@ -566,6 +605,7 @@ Inside interactive mode:
 /models
 /agent
 /agents
+/list
 /providers
 /trust
 /clear
@@ -687,6 +727,8 @@ Use `/agent` when you want to manually choose one registered agent and run one o
 These commands do not replace the normal orchestrator. They sit beside it, so you can keep the automatic workflow for normal prompts and switch to manual control only when you need it.
 
 You can use the Up and Down arrow keys to move through the `/models` and `/agent` selection screens, then press Enter to confirm.
+
+The runtime summary now appears under the answer as a compact footer with `hallucination`, `latency`, and `token usage`.
 
 ## Security Hardening
 

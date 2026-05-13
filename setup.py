@@ -2,7 +2,7 @@ from setuptools import setup, find_packages
 
 setup(
     name="limbi",
-    version="1.2.0",
+    version="1.3.0",
     description="Omni-Agent Orchestration Platform — 87 specialised AI agents, any LLM provider.",
     long_description=open("README.md", encoding="utf-8").read(),
     long_description_content_type="text/markdown",

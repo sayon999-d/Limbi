@@ -2,11 +2,14 @@
 
 from __future__ import annotations
 
+import json
 import logging
 import os
 from abc import ABC, abstractmethod
 from dataclasses import dataclass
 from typing import Any
+from urllib.error import HTTPError, URLError
+from urllib.request import Request, urlopen
 
 from langchain_core.language_models.chat_models import BaseChatModel
 
@@ -195,6 +198,70 @@ class CohereProvider(BaseLLMProvider):
             max_tokens=self.config.max_tokens,
         )
 
+
+class OpenRouterProvider(BaseLLMProvider):
+
+    def provider_name(self) -> str:
+        return "openrouter"
+
+    def get_chat_model(self) -> BaseChatModel:
+        from langchain_openai import ChatOpenAI
+        return ChatOpenAI(
+            model=self.config.model or "openai/gpt-4o",
+            api_key=self.config.api_key,
+            base_url="https://openrouter.ai/api/v1",
+            temperature=self.config.temperature,
+            max_tokens=self.config.max_tokens,
+        )
+
+
+class HuggingFaceProvider(BaseLLMProvider):
+
+    def provider_name(self) -> str:
+        return "huggingface"
+
+    def get_chat_model(self) -> BaseChatModel:
+        from langchain_openai import ChatOpenAI
+        return ChatOpenAI(
+            model=self.config.model or "meta-llama/Llama-3.1-8B-Instruct",
+            api_key=self.config.api_key,
+            base_url="https://router.huggingface.co/v1",
+            temperature=self.config.temperature,
+            max_tokens=self.config.max_tokens,
+        )
+
+
+class ChutesProvider(BaseLLMProvider):
+
+    def provider_name(self) -> str:
+        return "chutes"
+
+    def get_chat_model(self) -> BaseChatModel:
+        from langchain_openai import ChatOpenAI
+        return ChatOpenAI(
+            model=self.config.model or "meta-llama/Llama-3.1-8B-Instruct",
+            api_key=self.config.api_key,
+            base_url="https://llm.chutes.ai/v1",
+            temperature=self.config.temperature,
+            max_tokens=self.config.max_tokens,
+        )
+
+
+class BytezProvider(BaseLLMProvider):
+
+    def provider_name(self) -> str:
+        return "bytez"
+
+    def get_chat_model(self) -> BaseChatModel:
+        from langchain_openai import ChatOpenAI
+        return ChatOpenAI(
+            model=self.config.model or "meta-llama/Llama-3.1-8B-Instruct",
+            api_key=self.config.api_key,
+            base_url="https://api.bytez.com/models/v2/openai/v1",
+            temperature=self.config.temperature,
+            max_tokens=self.config.max_tokens,
+        )
+
 class OpenAICompatibleProvider(BaseLLMProvider):
 
     def provider_name(self) -> str:
@@ -218,6 +285,11 @@ _PROVIDER_MAP: dict[str, type[BaseLLMProvider]] = {
     "google": GoogleProvider,
     "gemini": GoogleProvider,
     "groq": GroqProvider,
+    "openrouter": OpenRouterProvider,
+    "huggingface": HuggingFaceProvider,
+    "hf": HuggingFaceProvider,
+    "chutes": ChutesProvider,
+    "bytez": BytezProvider,
     "together": TogetherProvider,
     "mistral": MistralProvider,
     "azure": AzureOpenAIProvider,
@@ -250,6 +322,81 @@ def get_llm_provider(config: ProviderConfig | None = None) -> BaseLLMProvider:
 def list_providers() -> list[str]:
 
     return sorted(set(cls.__name__ for cls in _PROVIDER_MAP.values()))
+
+
+_MODEL_LIST_ENDPOINTS = {
+    "openrouter": ("https://openrouter.ai/api/v1/models", "bearer"),
+    "groq": ("https://api.groq.com/openai/v1/models", "bearer"),
+    "huggingface": ("https://router.huggingface.co/v1/models", "bearer"),
+    "hf": ("https://router.huggingface.co/v1/models", "bearer"),
+    "chutes": ("https://llm.chutes.ai/v1/models", "bearer"),
+    "bytez": ("https://api.bytez.com/models/v2/list/models?task=chat", "raw"),
+}
+
+
+def _fetch_json(url: str, headers: dict[str, str] | None = None, timeout: int = 10) -> Any:
+    req = Request(url, headers=headers or {})
+    with urlopen(req, timeout=timeout) as resp:
+        return json.loads(resp.read().decode("utf-8"))
+
+
+def _normalize_model_ids(payload: Any, provider: str) -> list[str]:
+    models: list[str] = []
+    rows = []
+    if isinstance(payload, dict):
+        rows = payload.get("data") or payload.get("output") or payload.get("models") or []
+    elif isinstance(payload, list):
+        rows = payload
+    if not isinstance(rows, list):
+        return models
+    for row in rows:
+        if isinstance(row, str):
+            model_id = row.strip()
+        elif isinstance(row, dict):
+            model_id = str(
+                row.get("id")
+                or row.get("modelId")
+                or row.get("name")
+                or row.get("slug")
+                or ""
+            ).strip()
+        else:
+            model_id = ""
+        if model_id:
+            models.append(model_id)
+    return sorted(dict.fromkeys(models))
+
+
+def list_available_models(provider_name: str, api_key: str = "", base_url: str | None = None) -> list[str]:
+    provider = (provider_name or "").lower().strip()
+    resolved_base_url = (base_url or "").strip().rstrip("/")
+
+    if provider in _MODEL_LIST_ENDPOINTS:
+        endpoint, auth_style = _MODEL_LIST_ENDPOINTS[provider]
+        headers: dict[str, str] = {}
+        if api_key:
+            if auth_style == "bearer":
+                headers["Authorization"] = f"Bearer {api_key}"
+            else:
+                headers["Authorization"] = api_key
+        try:
+            return _normalize_model_ids(_fetch_json(endpoint, headers=headers), provider)
+        except (HTTPError, URLError, TimeoutError, ValueError, json.JSONDecodeError, OSError) as exc:
+            logger.info("Model catalog lookup failed for %s: %s", provider, exc)
+            return []
+
+    if provider in {"openai", "openai_compatible", "azure", "azure_openai", "lmstudio", "vllm", "localai", "koboldcpp", "llamacpp"} and resolved_base_url:
+        endpoint = f"{resolved_base_url}/models"
+        headers = {}
+        if api_key:
+            headers["Authorization"] = f"Bearer {api_key}"
+        try:
+            return _normalize_model_ids(_fetch_json(endpoint, headers=headers), provider)
+        except (HTTPError, URLError, TimeoutError, ValueError, json.JSONDecodeError, OSError) as exc:
+            logger.info("Model catalog lookup failed for %s at %s: %s", provider, endpoint, exc)
+            return []
+
+    return []
 
 
 _LOCAL_PROVIDER_NAMES = {
