@@ -80,6 +80,29 @@ Limbi may not be necessary when:
 - You do not want local workspace files such as `.limbi/config.json`.
 - Your use case is better served by a single direct API call to one LLM provider.
 
+## What Limbi Focuses On
+
+Limbi is not trying to be just another chat interface. Its main focus is orchestration, control, and reusable work.
+
+What Limbi prioritizes:
+
+- Multi-agent execution instead of one model doing everything alone.
+- Workspace-aware memory so work can continue across turns and across agents.
+- Provider flexibility so you can use local models, cloud models, or OpenAI-compatible endpoints without changing your workflow.
+- Practical execution tools such as file handling, code generation, research, web summarization, Git, security, and operations.
+- Human control through `/models`, `/agent`, `/agents`, and `/keys` so you can guide the system when needed.
+- Clear runtime feedback, audit logs, and context sharing so results are easier to trust and review.
+- Local-first behavior for laptop users, including support for smaller models when memory is limited.
+
+What Limbi does not try to optimize for:
+
+- Pure chat novelty or entertainment.
+- A single universal model with no memory or tool layer.
+- Hidden automation with no audit trail.
+- Locking you into one provider or one cloud vendor.
+
+In practice, that means Limbi is better suited for tasks where the answer is only part of the job. It is designed to plan, route, remember, fetch, write, compare, and track the work as it happens.
+
 ## How Limbi Works
 
 Every Limbi request follows the same high-level lifecycle.
