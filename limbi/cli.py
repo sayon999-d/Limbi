@@ -203,7 +203,7 @@ def _print_banner(console):
 
     banner = Text()
     banner.append("Limbi", style="bold orange1")
-    banner.append(" v1.4.3", style="bold white")
+    banner.append(" v1.5.0", style="bold white")
     banner.append(" - Omni-Agent Orchestrator\n")
     banner.append("Type your prompt, or ", style="white")
     banner.append("/models", style="bold orange1")
@@ -211,6 +211,8 @@ def _print_banner(console):
     banner.append("/agent", style="bold orange1")
     banner.append(", or ", style="white")
     banner.append("/agents", style="bold orange1")
+    banner.append(", ", style="white")
+    banner.append("/keys", style="bold orange1")
     banner.append(" for menus. ", style="white")
     banner.append("/help", style="bold orange1")
     banner.append(" shows the full list. ", style="white")
@@ -405,8 +407,6 @@ def _provider_choice_items() -> list[dict[str, str]]:
     items: list[dict[str, str]] = []
     for name, meta in _PROVIDER_CHOICES.items():
         details = f"{meta['description']} ({meta['type']})"
-        if meta["base_url"]:
-            details += f" | {meta['base_url']}"
         items.append({"name": name, "label": name, "details": details})
     return items
 
@@ -427,6 +427,48 @@ def _resolve_model_choice(choice: str) -> str:
     return alias_map.get(normalized, normalized)
 
 
+def _provider_base_url(provider: str, state: dict[str, Any] | None = None) -> str:
+    defaults = _PROVIDER_CHOICES.get(provider, {})
+    if state and state.get("base_url"):
+        return str(state["base_url"]).strip()
+    return str(defaults.get("base_url") or "").strip()
+
+
+def _store_provider_api_key(
+    state: dict[str, Any],
+    provider: str,
+    api_key: str,
+    base_url: str,
+) -> None:
+    from limbi.workspace import save_config, set_provider_api_key
+
+    ws_config = dict(state["ws_config"])
+    ws_config = set_provider_api_key(ws_config, provider, api_key, base_url)
+    save_config(ws_config)
+    state["ws_config"] = ws_config
+    if state.get("provider") == provider and str(state.get("base_url") or "").strip() == base_url:
+        state["api_key"] = api_key
+        _setup_env_overrides(provider, state.get("model"), api_key, base_url)
+        _refresh_orchestrator(state)
+
+
+def _delete_provider_api_key(
+    state: dict[str, Any],
+    provider: str,
+    base_url: str,
+) -> None:
+    from limbi.workspace import delete_provider_api_key, save_config
+
+    ws_config = dict(state["ws_config"])
+    ws_config = delete_provider_api_key(ws_config, provider, base_url)
+    save_config(ws_config)
+    state["ws_config"] = ws_config
+    if state.get("provider") == provider and str(state.get("base_url") or "").strip() == base_url:
+        state["api_key"] = ""
+        _setup_env_overrides(provider, state.get("model"), None, base_url)
+        _refresh_orchestrator(state)
+
+
 def _refresh_orchestrator(state: dict[str, Any]) -> None:
     from limbi.orchestrator import Orchestrator
 
@@ -434,7 +476,9 @@ def _refresh_orchestrator(state: dict[str, Any]) -> None:
 
 
 def _configure_runtime_from_model_choice(state: dict[str, Any], console) -> None:
-    from limbi.workspace import save_config
+    from limbi.workspace import get_provider_api_key, save_config, set_provider_api_key
+
+    ws_config = state["ws_config"]
 
     _print_model_choices(console)
     provider_default = _resolve_model_choice(state.get("provider") or "ollama")
@@ -447,13 +491,22 @@ def _configure_runtime_from_model_choice(state: dict[str, Any], console) -> None
     )
     provider = provider_item["name"]
     defaults = _PROVIDER_CHOICES.get(provider, {})
-    base_url = click.prompt(
-        "Choose base URL",
-        default=defaults.get("base_url") or state.get("base_url") or "",
-        show_default=bool(defaults.get("base_url") or state.get("base_url")),
-        type=str,
-    ).strip()
-    api_key = state.get("api_key") or ""
+    base_url = str(defaults.get("base_url") or "").strip()
+    if state.get("provider") == provider and state.get("base_url"):
+        base_url = str(state.get("base_url") or "").strip()
+    if provider == "openai_compatible":
+        base_url = click.prompt(
+            "Choose base URL",
+            default=base_url,
+            show_default=bool(base_url),
+            type=str,
+        ).strip()
+
+    api_key = ""
+    if state.get("provider") == provider and str(state.get("base_url") or "").strip() == base_url:
+        api_key = str(state.get("api_key") or "").strip()
+    if not api_key:
+        api_key = get_provider_api_key(ws_config, provider, base_url)
     if provider_requires_api_key(provider, base_url) and not api_key:
         api_key = click.prompt(
             f"Enter API key for {provider}",
@@ -463,6 +516,9 @@ def _configure_runtime_from_model_choice(state: dict[str, Any], console) -> None
         ).strip()
         if not api_key:
             raise click.ClickException("API key is required for the selected provider.")
+    if provider_requires_api_key(provider, base_url) and api_key:
+        ws_config = set_provider_api_key(ws_config, provider, api_key, base_url)
+        save_config(ws_config)
     if not provider_requires_api_key(provider, base_url):
         api_key = ""
 
@@ -534,7 +590,10 @@ def _configure_runtime_from_model_choice(state: dict[str, Any], console) -> None
         ws_config["provider"] = provider
         ws_config["model"] = model
         ws_config["base_url"] = base_url
-        ws_config["api_key_set"] = bool(api_key)
+        if api_key:
+            ws_config = set_provider_api_key(ws_config, provider, api_key, base_url)
+        else:
+            ws_config["api_key_set"] = bool(ws_config.get("provider_api_keys"))
         save_config(ws_config)
         state["ws_config"] = ws_config
 
@@ -544,6 +603,90 @@ def _configure_runtime_from_model_choice(state: dict[str, Any], console) -> None
         f"[green]Model:[/] [bold]{provider_summary.config.model}[/] "
         f"[green]Endpoint:[/] [bold]{provider_summary.config.base_url or '(provider default)'}[/]\n"
     )
+
+
+def _manage_provider_keys(state: dict[str, Any], console) -> None:
+    from limbi.workspace import (
+        delete_provider_api_key,
+        get_provider_api_key,
+        save_config,
+        set_provider_api_key,
+    )
+
+    while True:
+        ws_config = state["ws_config"]
+        provider_entries: list[dict[str, str]] = []
+        for name, meta in _PROVIDER_CHOICES.items():
+            base_url = str(meta.get("base_url") or "").strip()
+            key = get_provider_api_key(ws_config, name, base_url)
+            status = "saved" if key else "not saved"
+            details = f"{meta['description']} ({status})"
+            provider_entries.append({"name": name, "label": name, "details": details})
+
+        provider_item = _select_from_menu(
+            console,
+            "Manage saved API keys",
+            provider_entries,
+            help_text="Pick a provider, then choose whether to set, update, or delete its saved key.",
+        )
+        provider = provider_item["name"]
+        defaults = _PROVIDER_CHOICES.get(provider, {})
+        base_url = str(defaults.get("base_url") or "").strip()
+        if provider == "openai_compatible" or not base_url:
+            base_url = click.prompt(
+                "Choose base URL",
+                default=base_url or str(state.get("base_url") or ""),
+                show_default=bool(base_url or state.get("base_url")),
+                type=str,
+            ).strip()
+
+        actions = [
+            {"name": "set", "label": "Set or update key", "details": "save a new key for this provider"},
+            {"name": "delete", "label": "Delete key", "details": "remove the saved key"},
+            {"name": "back", "label": "Back", "details": "return to the terminal"},
+        ]
+        action_item = _select_from_menu(
+            console,
+            f"Key actions for {provider}",
+            actions,
+            help_text="Use Up/Down to move, then Enter to choose.",
+        )
+        action = action_item["name"]
+        if action == "back":
+            return
+
+        if action == "set":
+            api_key = click.prompt(
+                f"Enter API key for {provider}",
+                hide_input=True,
+                confirmation_prompt=False,
+                type=str,
+            ).strip()
+            if not api_key:
+                raise click.ClickException("API key is required.")
+            ws_config = set_provider_api_key(ws_config, provider, api_key, base_url)
+            save_config(ws_config)
+            state["ws_config"] = ws_config
+            if state.get("provider") == provider and str(state.get("base_url") or "").strip() == base_url:
+                state["api_key"] = api_key
+                _setup_env_overrides(provider, state.get("model"), api_key, base_url)
+                _refresh_orchestrator(state)
+            console.print(f"[green]Saved API key for {provider}.[/]")
+        else:
+            had_key = bool(get_provider_api_key(ws_config, provider, base_url))
+            ws_config = delete_provider_api_key(ws_config, provider, base_url)
+            save_config(ws_config)
+            state["ws_config"] = ws_config
+            if state.get("provider") == provider and str(state.get("base_url") or "").strip() == base_url:
+                state["api_key"] = ""
+                _setup_env_overrides(provider, state.get("model"), None, base_url)
+                _refresh_orchestrator(state)
+            if had_key:
+                console.print(f"[yellow]Deleted saved API key for {provider}.[/]")
+            else:
+                console.print(f"[dim]No saved API key existed for {provider}.[/]")
+        if not click.confirm("Manage another saved key?", default=False):
+            return
 
 
 def _parse_json_params(raw: str) -> dict[str, Any]:
@@ -653,14 +796,30 @@ def _ensure_api_key(provider: str | None, api_key: str | None, base_url: str | N
     resolved_key = (api_key or os.environ.get("LLM_API_KEY", "")).strip()
 
     if not provider_requires_api_key(resolved_provider, resolved_base_url):
-        return resolved_key or None
+        return None
+
+    from limbi.workspace import get_provider_api_key, save_config, set_provider_api_key
+
+    ws_config = None
+    try:
+        from limbi.workspace import load_config
+
+        ws_config = load_config()
+    except Exception:
+        ws_config = None
+
+    if not resolved_key and ws_config is not None:
+        resolved_key = get_provider_api_key(ws_config, resolved_provider, resolved_base_url)
 
     if resolved_key:
+        if ws_config is not None:
+            updated_config = set_provider_api_key(ws_config, resolved_provider, resolved_key, resolved_base_url)
+            save_config(updated_config)
         return resolved_key
 
     if not sys.stdin.isatty():
         raise click.ClickException(
-        f"Provider '{resolved_provider}' requires an API key, but the terminal is not interactive."
+            f"Provider '{resolved_provider}' requires an API key, but the terminal is not interactive."
         )
 
     entered = click.prompt(
@@ -671,6 +830,10 @@ def _ensure_api_key(provider: str | None, api_key: str | None, base_url: str | N
     ).strip()
     if not entered:
         raise click.ClickException("API key is required for the selected provider.")
+
+    if ws_config is not None:
+        updated_config = set_provider_api_key(ws_config, resolved_provider, entered, resolved_base_url)
+        save_config(updated_config)
 
     return entered
 
@@ -791,6 +954,9 @@ def _repl(state, console):
             if cmd in ("/model",):
                 _configure_runtime_from_model_choice(state, console)
                 continue
+            if cmd in ("/keys", "/key"):
+                _manage_provider_keys(state, console)
+                continue
             if cmd in ("/providers",):
                 _print_providers(console)
                 continue
@@ -823,8 +989,10 @@ def _repl(state, console):
 | `/agents` | Manually choose an agent and run one action |
 | `/agent` | Alias for `/agents` |
 | `/model` | Alias for `/models` |
+| `/key` | Alias for `/keys` |
 | `/providers` | Show supported LLM providers |
-| `/models` | Choose provider, model, and API key for the session |
+| `/models` | Choose provider, model, and save or reuse the API key |
+| `/keys` | Manage saved API keys for providers |
 | `/list` | List all registered agents |
 | `/trust` | Show workspace trust status |
 | `/clear` | Clear conversation history |
@@ -905,7 +1073,7 @@ Type a natural-language prompt to talk to Limbi.
     default=False,
     help="Skip workspace trust prompt (for CI/automation).",
 )
-@click.version_option(version="1.4.3", prog_name="limbi")
+@click.version_option(version="1.5.0", prog_name="limbi")
 def main(
     prompt: str | None,
     provider: str | None,
@@ -994,6 +1162,7 @@ def main(
         os.environ["LLM_BASE_URL"] = ws_config.get("base_url", "")
 
     api_key = _ensure_api_key(provider, api_key, os.environ.get("LLM_BASE_URL"))
+    ws_config = load_config()
     _setup_env_overrides(provider, model, api_key, os.environ.get("LLM_BASE_URL"))
 
     if provider_requires_api_key(

@@ -11,9 +11,10 @@ from typing import Any
 logger = logging.getLogger("limbi.workspace")
 
 WORKSPACE_DIR_NAME = ".limbi"
+API_KEYS_CONFIG_KEY = "provider_api_keys"
 
 _DEFAULT_CONFIG = {
-    "version": "1.4.3",
+    "version": "1.5.0",
     "created_at": "",
     "provider": "ollama",
     "model": "llama3.2:3b",
@@ -22,7 +23,84 @@ _DEFAULT_CONFIG = {
     "max_tokens": 1024,
     "session_ttl_hours": 24,
     "auto_publish_context": True,
+    API_KEYS_CONFIG_KEY: {},
 }
+
+
+def provider_api_key_id(provider: str, base_url: str | None = None) -> str:
+    name = (provider or "").strip().lower()
+    normalized_base = (base_url or "").strip().rstrip("/")
+    if name in {"openai_compatible", "azure", "azure_openai"} and normalized_base:
+        return f"{name}::{normalized_base}"
+    return name
+
+
+def _normalize_provider_api_keys(config: dict[str, Any]) -> dict[str, Any]:
+    normalized = dict(config)
+    keys = normalized.get(API_KEYS_CONFIG_KEY)
+    if not isinstance(keys, dict):
+        keys = {}
+
+    legacy_key = str(normalized.pop("api_key", "") or "").strip()
+    if legacy_key:
+        key_id = provider_api_key_id(
+            normalized.get("provider", ""),
+            normalized.get("base_url", ""),
+        )
+        if key_id:
+            keys[key_id] = legacy_key
+
+    cleaned_keys = {
+        str(key).strip(): str(value).strip()
+        for key, value in keys.items()
+        if str(key).strip() and str(value).strip()
+    }
+    normalized[API_KEYS_CONFIG_KEY] = cleaned_keys
+    normalized["api_key_set"] = bool(cleaned_keys)
+    return normalized
+
+
+def get_provider_api_keys(config: dict[str, Any]) -> dict[str, str]:
+    keys = config.get(API_KEYS_CONFIG_KEY)
+    if not isinstance(keys, dict):
+        return {}
+    return {
+        str(key).strip(): str(value).strip()
+        for key, value in keys.items()
+        if str(key).strip() and str(value).strip()
+    }
+
+
+def get_provider_api_key(config: dict[str, Any], provider: str, base_url: str | None = None) -> str:
+    keys = get_provider_api_keys(config)
+    return keys.get(provider_api_key_id(provider, base_url), "")
+
+
+def set_provider_api_key(
+    config: dict[str, Any],
+    provider: str,
+    api_key: str,
+    base_url: str | None = None,
+) -> dict[str, Any]:
+    normalized = dict(config)
+    keys = get_provider_api_keys(normalized)
+    key_id = provider_api_key_id(provider, base_url)
+    if api_key.strip():
+        keys[key_id] = api_key.strip()
+    elif key_id in keys:
+        keys.pop(key_id, None)
+    normalized[API_KEYS_CONFIG_KEY] = keys
+    normalized["api_key_set"] = bool(keys)
+    normalized.pop("api_key", None)
+    return normalized
+
+
+def delete_provider_api_key(
+    config: dict[str, Any],
+    provider: str,
+    base_url: str | None = None,
+) -> dict[str, Any]:
+    return set_provider_api_key(config, provider, "", base_url=base_url)
 
 
 def get_workspace_path(base_dir: str | None = None) -> Path:
@@ -58,9 +136,14 @@ def init_workspace(base_dir: str | None = None) -> dict[str, Any]:
         config["model"] = os.getenv("LLM_MODEL", config["model"])
         config["base_url"] = os.getenv("LLM_BASE_URL", config["base_url"])
         if os.getenv("LLM_API_KEY"):
-            config["api_key_set"] = True
+            config = set_provider_api_key(
+                config,
+                config["provider"],
+                os.getenv("LLM_API_KEY", ""),
+                config["base_url"],
+            )
 
-        config_path.write_text(json.dumps(config, indent=2) + "\n", encoding="utf-8")
+        config_path.write_text(json.dumps(_normalize_provider_api_keys(config), indent=2) + "\n", encoding="utf-8")
         created.append(".limbi/config.json")
     else:
         existing.append(".limbi/config.json")
@@ -118,7 +201,11 @@ def load_config(base_dir: str | None = None) -> dict[str, Any]:
 
     if config_path.exists():
         try:
-            return json.loads(config_path.read_text(encoding="utf-8"))
+            loaded = json.loads(config_path.read_text(encoding="utf-8"))
+            normalized = _normalize_provider_api_keys(loaded)
+            if normalized != loaded:
+                save_config(normalized, base_dir=base_dir)
+            return normalized
         except (json.JSONDecodeError, OSError) as exc:
             logger.warning("Failed to read config: %s", exc)
 
@@ -128,7 +215,7 @@ def load_config(base_dir: str | None = None) -> dict[str, Any]:
 def save_config(config: dict[str, Any], base_dir: str | None = None) -> None:
     ws = get_workspace_path(base_dir)
     config_path = ws / "config.json"
-    config_path.write_text(json.dumps(config, indent=2) + "\n", encoding="utf-8")
+    config_path.write_text(json.dumps(_normalize_provider_api_keys(config), indent=2) + "\n", encoding="utf-8")
 
 
 def get_db_path(name: str) -> str:
