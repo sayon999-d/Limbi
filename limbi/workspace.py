@@ -14,7 +14,7 @@ WORKSPACE_DIR_NAME = ".limbi"
 API_KEYS_CONFIG_KEY = "provider_api_keys"
 
 _DEFAULT_CONFIG = {
-    "version": "1.5.0",
+    "version": "1.5.1",
     "created_at": "",
     "provider": "ollama",
     "model": "llama3.2:3b",

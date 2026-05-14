@@ -203,7 +203,7 @@ def _print_banner(console):
 
     banner = Text()
     banner.append("Limbi", style="bold orange1")
-    banner.append(" v1.5.0", style="bold white")
+    banner.append(" v1.5.1", style="bold white")
     banner.append(" - Omni-Agent Orchestrator\n")
     banner.append("Type your prompt, or ", style="white")
     banner.append("/models", style="bold orange1")
@@ -467,6 +467,42 @@ def _delete_provider_api_key(
         state["api_key"] = ""
         _setup_env_overrides(provider, state.get("model"), None, base_url)
         _refresh_orchestrator(state)
+
+
+def _ensure_runtime_api_key(state: dict[str, Any], console) -> str | None:
+    from limbi.workspace import get_provider_api_key
+
+    provider = str(state.get("provider") or os.environ.get("LLM_PROVIDER", "ollama")).strip().lower()
+    base_url = str(state.get("base_url") or os.environ.get("LLM_BASE_URL", "")).strip()
+    if not provider_requires_api_key(provider, base_url):
+        return None
+
+    saved_key = str(state.get("api_key") or "").strip()
+    if not saved_key:
+        saved_key = str(os.environ.get("LLM_API_KEY", "")).strip()
+    if not saved_key:
+        saved_key = get_provider_api_key(state["ws_config"], provider, base_url)
+
+    if saved_key:
+        _store_provider_api_key(state, provider, saved_key, base_url)
+        return saved_key
+
+    if not sys.stdin.isatty():
+        raise click.ClickException(
+            f"Provider '{provider}' requires an API key. Run /models or /keys to save one first."
+        )
+
+    api_key = click.prompt(
+        f"Enter API key for {provider}",
+        hide_input=True,
+        confirmation_prompt=False,
+        type=str,
+    ).strip()
+    if not api_key:
+        raise click.ClickException("API key is required for the selected provider.")
+
+    _store_provider_api_key(state, provider, api_key, base_url)
+    return api_key
 
 
 def _refresh_orchestrator(state: dict[str, Any]) -> None:
@@ -790,7 +826,7 @@ def _setup_env_overrides(
             os.environ.pop("LLM_API_KEY", None)
 
 
-def _ensure_api_key(provider: str | None, api_key: str | None, base_url: str | None = None) -> str | None:
+def _resolve_api_key(provider: str | None, api_key: str | None, base_url: str | None = None) -> str | None:
     resolved_provider = (provider or os.environ.get("LLM_PROVIDER", "ollama")).strip().lower()
     resolved_base_url = (base_url or os.environ.get("LLM_BASE_URL", "")).strip()
     resolved_key = (api_key or os.environ.get("LLM_API_KEY", "")).strip()
@@ -811,31 +847,11 @@ def _ensure_api_key(provider: str | None, api_key: str | None, base_url: str | N
     if not resolved_key and ws_config is not None:
         resolved_key = get_provider_api_key(ws_config, resolved_provider, resolved_base_url)
 
-    if resolved_key:
-        if ws_config is not None:
-            updated_config = set_provider_api_key(ws_config, resolved_provider, resolved_key, resolved_base_url)
-            save_config(updated_config)
-        return resolved_key
-
-    if not sys.stdin.isatty():
-        raise click.ClickException(
-            f"Provider '{resolved_provider}' requires an API key, but the terminal is not interactive."
-        )
-
-    entered = click.prompt(
-        f"Enter API key for {resolved_provider}",
-        hide_input=True,
-        confirmation_prompt=False,
-        type=str,
-    ).strip()
-    if not entered:
-        raise click.ClickException("API key is required for the selected provider.")
-
-    if ws_config is not None:
-        updated_config = set_provider_api_key(ws_config, resolved_provider, entered, resolved_base_url)
+    if resolved_key and ws_config is not None:
+        updated_config = set_provider_api_key(ws_config, resolved_provider, resolved_key, resolved_base_url)
         save_config(updated_config)
 
-    return entered
+    return resolved_key or None
 
 
 def _is_parser_noise(error: str) -> bool:
@@ -859,7 +875,7 @@ async def _status_ticker(status, stop_event: asyncio.Event) -> None:
             return
 
 
-async def _send_message(orchestrator, message: str, console) -> None:
+async def _send_message(state, message: str, console) -> None:
     from rich.markdown import Markdown
     from rich.panel import Panel
 
@@ -867,7 +883,8 @@ async def _send_message(orchestrator, message: str, console) -> None:
     with console.status("[bold orange1]Thinking...[/]", spinner="dots") as status:
         ticker = asyncio.create_task(_status_ticker(status, stop_event))
         try:
-            result = await orchestrator.chat(message)
+            _ensure_runtime_api_key(state, console)
+            result = await state["orchestrator"].chat(message)
         finally:
             stop_event.set()
             ticker.cancel()
@@ -1007,7 +1024,7 @@ Type a natural-language prompt to talk to Limbi.
                 )
                 continue
 
-        asyncio.run(_send_message(state["orchestrator"], user_input, console))
+        asyncio.run(_send_message(state, user_input, console))
 
 
 @click.command(context_settings={"help_option_names": ["-h", "--help"]})
@@ -1073,7 +1090,7 @@ Type a natural-language prompt to talk to Limbi.
     default=False,
     help="Skip workspace trust prompt (for CI/automation).",
 )
-@click.version_option(version="1.5.0", prog_name="limbi")
+@click.version_option(version="1.5.1", prog_name="limbi")
 def main(
     prompt: str | None,
     provider: str | None,
@@ -1161,7 +1178,7 @@ def main(
     if not os.environ.get("LLM_BASE_URL"):
         os.environ["LLM_BASE_URL"] = ws_config.get("base_url", "")
 
-    api_key = _ensure_api_key(provider, api_key, os.environ.get("LLM_BASE_URL"))
+    api_key = _resolve_api_key(provider, api_key, os.environ.get("LLM_BASE_URL"))
     ws_config = load_config()
     _setup_env_overrides(provider, model, api_key, os.environ.get("LLM_BASE_URL"))
 
@@ -1205,7 +1222,7 @@ def main(
     )
 
     if prompt:
-        asyncio.run(_send_message(state["orchestrator"], prompt, console))
+        asyncio.run(_send_message(state, prompt, console))
     else:
         _repl(state, console)
 

@@ -15,7 +15,7 @@
 
 Limbi is an omni-agent orchestration platform for running many specialized AI agents from one command, one Python API, or one MCP-compatible editor workflow.
 
-Current package version: `1.5.0`
+Current package version: `1.5.1`
 
 Current system size:
 
@@ -473,6 +473,8 @@ export LLM_BASE_URL="https://ollama.com/v1"
 export OLLAMA_API_KEY="your_ollama_cloud_key"
 ```
 
+Limbi only asks for a cloud API key when you actually choose a cloud provider or cloud model. Startup stays quiet for local providers. If you already saved a key with `/keys`, Limbi reuses it automatically.
+
 For other local model servers, use the OpenAI-compatible provider. Limbi treats localhost endpoints as local, so it will not ask for an API key when the base URL is clearly local.
 
 For LM Studio:
@@ -492,6 +494,8 @@ export LLM_PROVIDER=vllm
 export LLM_BASE_URL="http://localhost:8000/v1"
 export LLM_MODEL="local-model-name"
 ```
+
+If you want Limbi to manage the key for you during a session, use `/models` or `/keys` after startup. Limbi stores the key in the workspace config under `.limbi/config.json`, so you do not have to re-enter it every time.
 
 For LocalAI:
 
@@ -614,6 +618,8 @@ Inside interactive mode:
 /models
 /agent
 /agents
+/key
+/keys
 /list
 /providers
 /trust
@@ -621,6 +627,8 @@ Inside interactive mode:
 /help
 /quit
 ```
+
+Use `/models` when you want to pick a provider and model first, then let Limbi reuse the saved key if it already exists. Use `/keys` when you want to set, replace, or delete the saved key for a provider without changing the model.
 
 ### 6. Understand The Workspace
 
@@ -733,6 +741,8 @@ Use `/models` when you want to choose the provider, model, and endpoint manually
 
 Use `/agent` when you want to manually choose one registered agent and run one of its actions directly.
 
+Use `/keys` when you want to manage stored provider keys. This is the persistent key store for Limbi. Once saved, the key stays available in `.limbi/config.json` until you delete it.
+
 These commands do not replace the normal orchestrator. They sit beside it, so you can keep the automatic workflow for normal prompts and switch to manual control only when you need it.
 
 You can use the Up and Down arrow keys to move through the `/models` and `/agent` selection screens, then press Enter to confirm.
@@ -750,6 +760,7 @@ Limbi now includes a few protections that matter if you run the backend beyond a
 - MCP and the VS Code extension can send the same API key so authenticated setups still work smoothly.
 - The CLI asks whether to trust a workspace before it starts work in that folder.
 - The CLI only asks for an API key when the selected provider or local endpoint truly needs one.
+- Saved provider keys stay inside the local workspace config and can be removed later with `/keys`.
 
 Recommended setup for anything shared, exposed, or long-lived:
 
@@ -848,12 +859,24 @@ limbi "prompt"
 
 ### `Provider requires an API key`
 
-If you select a hosted provider, Limbi will ask for the key in the terminal and use it for that session.
+If you select a hosted provider, Limbi will ask for the key the first time you actually use that provider or cloud model. After you save it, Limbi reuses it from the workspace config.
 
 If you are using a local model service and Limbi still asks for a key, check that:
 
 - `LLM_PROVIDER` is set to a local provider such as `ollama`, `lmstudio`, `vllm`, `localai`, `koboldcpp`, or `llamacpp`
 - `LLM_BASE_URL` points to a local address such as `localhost` or `127.0.0.1`
+
+To clear or replace a saved key, use:
+
+```bash
+python -m limbi
+```
+
+Then run:
+
+```text
+/keys
+```
 
 ### `No such option: --generate-mcp-config`
 
@@ -968,6 +991,30 @@ python -m compileall limbi
 python -m limbi --version
 python -m limbi --list-agents
 python -m twine check dist/limbi-*.tar.gz dist/limbi-*.whl
+```
+
+## Release Command
+
+Use this when you are preparing the next release:
+
+```bash
+# 1. Push the pending commit first
+git push origin main
+
+# 2. Bump version to 1.5.1
+sed -i '' 's/1.5.1/1.5.1/g' pyproject.toml setup.py limbi/__init__.py limbi/cli.py limbi/workspace.py README.md
+
+# 3. Commit the version bump
+git add -A && git commit -m "v1.5.1: persistent key reuse and cloud prompt cleanup" && git push origin main
+
+# 4. Clean, build, check, publish
+rm -rf dist/ build/ limbi.egg-info/
+python -m build
+python -m twine check dist/*
+python -m twine upload dist/*
+
+# 5. Upgrade locally to verify
+python -m pip install --upgrade limbi
 ```
 
 ## License
