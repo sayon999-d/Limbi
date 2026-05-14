@@ -103,6 +103,9 @@ def build_runtime_metrics(
     delegations: list[dict[str, Any]] | None = None,
     elapsed_ms: float = 0.0,
     clarification_requested: bool = False,
+    task_complexity: str = "moderate",
+    token_budget: int = 0,
+    memory_turns: int = 0,
 ) -> dict[str, Any]:
     usage = extract_usage_metadata(response, prompt_text=prompt_text, completion_text=raw_text)
     risk = estimate_hallucination_risk(
@@ -118,6 +121,9 @@ def build_runtime_metrics(
         "prompt_tokens": usage["prompt_tokens"],
         "completion_tokens": usage["completion_tokens"],
         "total_tokens": usage["total_tokens"],
+        "task_complexity": task_complexity,
+        "runtime_token_budget": token_budget,
+        "memory_turns": memory_turns,
         "estimated_hallucination_risk_percent": risk,
         "estimated_confidence_percent": 100 - risk,
     }

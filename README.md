@@ -15,7 +15,7 @@
 
 Limbi is an omni-agent orchestration platform for running many specialized AI agents from one command, one Python API, or one MCP-compatible editor workflow.
 
-Current package version: `1.5.1`
+Current package version: `1.5.2`
 
 Current system size:
 
@@ -749,6 +749,46 @@ You can use the Up and Down arrow keys to move through the `/models` and `/agent
 
 The runtime summary now appears under the answer as a compact footer with `hallucination`, `latency`, and `token usage`.
 
+## URL Research
+
+If your prompt includes one or more URLs, Limbi now treats it like a source-grounded research task.
+
+Example:
+
+```text
+Summarize this page and explain the main points:
+https://example.com/article
+```
+
+Limbi will:
+
+1. Detect the URL in your prompt.
+2. Fetch the page content through the web research path.
+3. Extract the title, headings, and readable content.
+4. Build a source context block for the orchestrator.
+5. Return a summary grounded in the fetched page instead of guessing from memory.
+
+If multiple URLs are present, Limbi also compares the source summaries so it can describe agreement and differences more clearly.
+
+If a page is heavily JavaScript-rendered or blocks simple HTTP fetching, Limbi may return a partial summary or a fetch error instead of inventing details.
+
+## Session Memory And Adaptive Runtime
+
+Limbi keeps a live session memory while it is running:
+
+- Every user prompt and assistant response is written into the workspace memory stores.
+- Shared session state is kept in `context_memory.db` so other agents can read the current goal, recent focus, and conversation summary.
+- The same session memory stays available if you switch provider or model during the run.
+- Limbi also stores the conversation summary so later turns can stay grounded in earlier work.
+
+Limbi adapts its runtime budget to the task:
+
+- Simple prompts use a smaller token budget and a lower temperature.
+- Larger builds, research tasks, and multi-step jobs get a higher token budget.
+- The CLI footer shows the current hallucination estimate, latency, token usage, task complexity, and runtime token budget.
+
+This is designed to keep the assistant lighter for small tasks and more thorough for harder ones without making the user manage those knobs manually.
+
 ## Security Hardening
 
 Limbi now includes a few protections that matter if you run the backend beyond a private local terminal:
@@ -1001,11 +1041,11 @@ Use this when you are preparing the next release:
 # 1. Push the pending commit first
 git push origin main
 
-# 2. Bump version to 1.5.1
-sed -i '' 's/1.5.1/1.5.1/g' pyproject.toml setup.py limbi/__init__.py limbi/cli.py limbi/workspace.py README.md
+# 2. Bump version to 1.5.2
+sed -i '' 's/1.5.2/1.5.2/g' pyproject.toml setup.py limbi/__init__.py limbi/cli.py limbi/workspace.py README.md
 
 # 3. Commit the version bump
-git add -A && git commit -m "v1.5.1: persistent key reuse and cloud prompt cleanup" && git push origin main
+git add -A && git commit -m "v1.5.2: session memory and adaptive runtime improvements" && git push origin main
 
 # 4. Clean, build, check, publish
 rm -rf dist/ build/ limbi.egg-info/

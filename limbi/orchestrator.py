@@ -1,11 +1,11 @@
-
-
 from __future__ import annotations
 
 import asyncio
 import logging
 import os
+import re
 import time
+from urllib.parse import urlparse
 from typing import Any, AsyncIterator
 
 from langchain_core.language_models.chat_models import BaseChatModel
@@ -17,7 +17,13 @@ from .payload_parser import ParsedOutput, parse_llm_output
 from .agents import get_agent, list_agents, AgentResult
 from .vector_store import VectorStore
 from .audit_log import log_execution, get_recent_executions
-from .agents.context_memory_agent import publish_agent_result, get_session_context
+from .agents.context_memory_agent import (
+    publish_agent_result,
+    get_session_context,
+    record_session_turn,
+    get_shared_state_value,
+    set_shared_state_value,
+)
 from .runtime_metrics import build_runtime_metrics
 
 logger = logging.getLogger("limbi.orchestrator")
@@ -94,6 +100,14 @@ When you decide an action needs to be executed in the real world, include a \
 {shared_agent_context}
 
 {rag_context}
+
+## URL Research Context
+{url_research_context}
+
+## Source Grounding Rules
+- If URL research context is present, use it as the primary evidence source.
+- Prefer facts, headings, and quoted page content over generic memory.
+- If a URL cannot be fetched or rendered, say so plainly and do not invent details.
 """
 
 
@@ -155,6 +169,87 @@ def _build_recent_executions_text() -> str:
         )
     return "\n".join(lines)
 
+
+def _extract_urls(text: str) -> list[str]:
+    candidates = re.findall(r"https?://[^\s<>()\[\]{}]+", text)
+    urls: list[str] = []
+    seen: set[str] = set()
+    for raw in candidates:
+        cleaned = raw.rstrip(".,;:!?)]}'\"")
+        parsed = urlparse(cleaned)
+        if not parsed.scheme or not parsed.netloc:
+            continue
+        if cleaned in seen:
+            continue
+        seen.add(cleaned)
+        urls.append(cleaned)
+    return urls
+
+
+def _estimate_task_complexity(
+    user_message: str,
+    *,
+    rag_context: str = "",
+    url_research_context: str = "",
+    shared_context: str = "",
+) -> dict[str, Any]:
+    text = user_message.lower()
+    words = user_message.split()
+    score = 0
+
+    if len(words) > 18:
+        score += min(4, len(words) // 18)
+    if len(words) > 60:
+        score += 2
+
+    if any(token in text for token in ("build", "create", "implement", "refactor", "debug", "fix", "optimize", "design")):
+        score += 2
+    if any(token in text for token in ("research", "summarize", "compare", "analyze", "article", "website", "url", "source")):
+        score += 2
+    if _extract_urls(user_message):
+        score += 2
+    if any(token in text for token in ("file", "folder", "workspace", "save", "write", "agent", "model", "provider")):
+        score += 1
+    if "\n" in user_message or "```" in user_message:
+        score += 1
+    if text.count(" and ") >= 2 or text.count(",") >= 3:
+        score += 1
+    if rag_context:
+        score += 1
+    if url_research_context:
+        score += 2
+    if shared_context:
+        score += min(2, max(0, len(shared_context) // 800))
+
+    if score <= 2:
+        level = "simple"
+    elif score <= 6:
+        level = "moderate"
+    else:
+        level = "complex"
+
+    return {"score": score, "level": level}
+
+
+def _suggest_runtime_limits(level: str, base_max_tokens: int, base_temperature: float) -> dict[str, Any]:
+    base_max_tokens = max(256, int(base_max_tokens or 1024))
+    base_temperature = max(0.0, float(base_temperature or 0.1))
+
+    if level == "simple":
+        max_tokens = min(base_max_tokens, 768)
+        temperature = min(base_temperature, 0.05)
+    elif level == "complex":
+        max_tokens = min(max(base_max_tokens, 2048), 3072)
+        temperature = min(base_temperature, 0.1)
+    else:
+        max_tokens = min(max(base_max_tokens, 1024), 1536)
+        temperature = min(base_temperature, 0.08)
+
+    return {
+        "max_tokens": max_tokens,
+        "temperature": round(temperature, 2),
+    }
+
 class Orchestrator:
 
     def __init__(
@@ -174,9 +269,16 @@ class Orchestrator:
 
         self._vector_store = VectorStore()
 
-        self._llm: BaseChatModel | None = None
+        self._llm_cache: dict[tuple[Any, ...], BaseChatModel] = {}
 
         self._session_id = session_id
+
+        try:
+            saved_summary = get_shared_state_value(self._session_id, "conversation_summary").get("value")
+            if isinstance(saved_summary, str):
+                self._conversation_summary = saved_summary
+        except Exception:
+            pass
 
         logger.info(
             "Orchestrator init - provider=%s model=%s session=%s",
@@ -185,10 +287,186 @@ class Orchestrator:
             self._session_id,
         )
 
-    def _ensure_llm(self) -> BaseChatModel:
-        if self._llm is None:
-            self._llm = self._provider.get_chat_model()
-        return self._llm
+    def _ensure_llm(
+        self,
+        *,
+        max_tokens: int | None = None,
+        temperature: float | None = None,
+    ) -> BaseChatModel:
+        runtime_config = ProviderConfig(
+            provider=self._provider.config.provider,
+            model=self._provider.config.model,
+            base_url=self._provider.config.base_url,
+            api_key=self._provider.config.api_key,
+            temperature=self._provider.config.temperature if temperature is None else temperature,
+            max_tokens=self._provider.config.max_tokens if max_tokens is None else max_tokens,
+            azure_deployment=self._provider.config.azure_deployment,
+            azure_api_version=self._provider.config.azure_api_version,
+        )
+        cache_key = (
+            runtime_config.provider,
+            runtime_config.model,
+            runtime_config.base_url,
+            runtime_config.api_key,
+            runtime_config.temperature,
+            runtime_config.max_tokens,
+            runtime_config.azure_deployment,
+            runtime_config.azure_api_version,
+        )
+        llm = self._llm_cache.get(cache_key)
+        if llm is None:
+            llm = get_llm_provider(runtime_config).get_chat_model()
+            self._llm_cache[cache_key] = llm
+        return llm
+
+    def _sync_session_state(self) -> None:
+        try:
+            set_shared_state_value(self._session_id, "provider", self._provider.provider_name())
+            set_shared_state_value(self._session_id, "model", self._provider.config.model)
+            set_shared_state_value(self._session_id, "base_url", self._provider.config.base_url)
+            if self._conversation_summary:
+                set_shared_state_value(self._session_id, "conversation_summary", self._conversation_summary)
+        except Exception as exc:
+            logger.debug("Session state sync failed: %s", exc)
+
+    def _record_turn(
+        self,
+        role: str,
+        content: str,
+        *,
+        metadata: dict[str, Any] | None = None,
+    ) -> None:
+        try:
+            record_session_turn(
+                self._session_id,
+                role,
+                content,
+                source_agent="limbi" if role != "user" else "user",
+                metadata=metadata or {},
+                priority="high" if role == "user" else "normal",
+            )
+        except Exception as exc:
+            logger.debug("Session turn record skipped: %s", exc)
+        try:
+            memory_agent = get_agent("memory_agent")
+            memory_agent.execute(
+                "note",
+                {
+                    "content": content[:2000],
+                    "role": role,
+                    "session_id": self._session_id,
+                },
+            )
+        except Exception as exc:
+            logger.debug("Short-term memory record skipped: %s", exc)
+
+    async def _build_url_research_context(self, user_message: str) -> str:
+        urls = _extract_urls(user_message)
+        if not urls:
+            return ""
+
+        try:
+            web_agent = get_agent("web_scraping_agent")
+        except KeyError:
+            web_agent = None
+
+        try:
+            research_agent = get_agent("research_agent")
+        except KeyError:
+            research_agent = None
+
+        async def summarize_url(url: str) -> dict[str, Any]:
+            try:
+                if web_agent is None:
+                    return {
+                        "url": url,
+                        "title": "",
+                        "section_headings": [],
+                        "summary": "",
+                        "error": "web_scraping_agent is not available",
+                    }
+
+                result = await asyncio.to_thread(web_agent.execute, "summarize_page", {"url": url})
+                data = result.data if result.success else {}
+                return {
+                    "url": url,
+                    "title": str(data.get("title") or urlparse(url).netloc or url),
+                    "section_headings": list(data.get("section_headings") or []),
+                    "summary": str(data.get("summary") or data.get("message") or ""),
+                    "word_count": data.get("word_count", 0),
+                    "success": result.success,
+                    "error": result.error,
+                }
+            except Exception as exc:
+                return {
+                    "url": url,
+                    "title": urlparse(url).netloc or url,
+                    "section_headings": [],
+                    "summary": "",
+                    "success": False,
+                    "error": str(exc),
+                }
+
+        source_summaries = await asyncio.gather(
+            *(summarize_url(url) for url in urls[:3]),
+            return_exceptions=False,
+        )
+
+        source_blocks: list[str] = ["## Fetched URL Sources"]
+        comparison_sources: list[dict[str, str]] = []
+
+        for index, item in enumerate(source_summaries, start=1):
+            headings = item.get("section_headings") or []
+            summary = item.get("summary") or ""
+            source_blocks.append(
+                "\n".join(
+                    [
+                        f"### Source {index}",
+                        f"- URL: {item['url']}",
+                        f"- Title: {item.get('title') or '(unknown)'}",
+                        f"- Status: {'fetched' if item.get('success') else 'unavailable'}",
+                        f"- Key headings: {', '.join(headings[:5]) if headings else '(none)'}",
+                        f"- Summary: {summary[:1200] if summary else '(no summary available)'}",
+                    ]
+                )
+            )
+            if summary:
+                comparison_sources.append(
+                    {
+                        "title": item.get("title") or f"Source {index}",
+                        "content": f"URL: {item['url']}\n{summary}",
+                    }
+                )
+
+        if research_agent is not None and len(comparison_sources) >= 2:
+            compare_result = await asyncio.to_thread(
+                research_agent.execute,
+                "compare_sources",
+                {"sources": comparison_sources, "topic": user_message[:200]},
+            )
+            compare_data = compare_result.data if compare_result.success else {}
+            source_blocks.append(
+                "\n".join(
+                    [
+                        "### Source Comparison",
+                        f"- Consensus: {compare_data.get('consensus', 'unknown')}",
+                        f"- Agreement ratio: {compare_data.get('agreement_ratio', 0)}",
+                        f"- Common themes: {', '.join(compare_data.get('common_themes', [])[:8]) or '(none)'}",
+                    ]
+                )
+            )
+        elif len(comparison_sources) >= 2:
+            source_blocks.append(
+                "### Source Comparison\n- Consensus: unavailable\n- Agreement ratio: unavailable\n- Common themes: unavailable"
+            )
+
+        source_blocks.append(
+            "## How To Use These Sources\n"
+            "- Treat the fetched material as the primary evidence.\n"
+            "- If the answer depends on details not visible in the fetched pages, say so.\n"
+            "- Prefer source-based summaries over generic model memory."
+        )
+        return "\n\n".join(source_blocks)
 
     async def chat(self, user_message: str) -> dict[str, Any]:
 
@@ -230,16 +508,40 @@ class Orchestrator:
                 "requires_api_key": True,
             }
 
-        llm = self._ensure_llm()
+        self._sync_session_state()
+        self._record_turn(
+            "user",
+            user_message,
+            metadata={
+                "provider": self._provider.provider_name(),
+                "model": self._provider.config.model,
+            },
+        )
 
         rag_context = self._vector_store.get_context_string(user_message)
-
+        url_research_context = await self._build_url_research_context(user_message)
         agent_registry = _build_agent_registry_text()
         recent_execs = _build_recent_executions_text()
         shared_ctx = get_session_context(self._session_id)
+        task_profile = _estimate_task_complexity(
+            user_message,
+            rag_context=rag_context,
+            url_research_context=url_research_context,
+            shared_context=shared_ctx,
+        )
+        runtime_limits = _suggest_runtime_limits(
+            task_profile["level"],
+            self._provider.config.max_tokens,
+            self._provider.config.temperature,
+        )
+        llm = self._ensure_llm(
+            max_tokens=runtime_limits["max_tokens"],
+            temperature=runtime_limits["temperature"],
+        )
         system_text = SYSTEM_PROMPT.format(
             agent_registry=agent_registry,
             rag_context=rag_context,
+            url_research_context=url_research_context,
             recent_executions=recent_execs,
             shared_agent_context=shared_ctx,
         )
@@ -292,9 +594,22 @@ class Orchestrator:
             feedback_msg = f"\n\n---\n** Agent Execution Results:**\n{result_summary}"
             parsed.conversation_text += feedback_msg
 
+        self._record_turn(
+            "assistant",
+            parsed.conversation_text,
+            metadata={
+                "task_level": task_profile["level"],
+                "task_score": task_profile["score"],
+                "provider": self._provider.provider_name(),
+                "model": self._provider.config.model,
+                "max_tokens": runtime_limits["max_tokens"],
+            },
+        )
+
         self._history.append(HumanMessage(content=user_message))
         self._history.append(AIMessage(content=raw_text))
         await self._manage_history()
+        self._sync_session_state()
 
         elapsed_ms = (time.perf_counter() - started) * 1000
         metrics = build_runtime_metrics(
@@ -305,6 +620,9 @@ class Orchestrator:
             delegations=delegation_results,
             elapsed_ms=elapsed_ms,
             clarification_requested=False,
+            task_complexity=task_profile["level"],
+            token_budget=runtime_limits["max_tokens"],
+            memory_turns=len(self._history),
         )
 
         return {
@@ -361,15 +679,40 @@ class Orchestrator:
             }
             return
 
-        llm = self._ensure_llm()
+        self._sync_session_state()
+        self._record_turn(
+            "user",
+            user_message,
+            metadata={
+                "provider": self._provider.provider_name(),
+                "model": self._provider.config.model,
+            },
+        )
 
         rag_context = self._vector_store.get_context_string(user_message)
+        url_research_context = await self._build_url_research_context(user_message)
         agent_registry = _build_agent_registry_text()
         recent_execs = _build_recent_executions_text()
         shared_ctx = get_session_context(self._session_id)
+        task_profile = _estimate_task_complexity(
+            user_message,
+            rag_context=rag_context,
+            url_research_context=url_research_context,
+            shared_context=shared_ctx,
+        )
+        runtime_limits = _suggest_runtime_limits(
+            task_profile["level"],
+            self._provider.config.max_tokens,
+            self._provider.config.temperature,
+        )
+        llm = self._ensure_llm(
+            max_tokens=runtime_limits["max_tokens"],
+            temperature=runtime_limits["temperature"],
+        )
         system_text = SYSTEM_PROMPT.format(
             agent_registry=agent_registry,
             rag_context=rag_context,
+            url_research_context=url_research_context,
             recent_executions=recent_execs,
             shared_agent_context=shared_ctx,
         )
@@ -408,9 +751,22 @@ class Orchestrator:
             for result in delegation_results:
                 yield {"type": "delegation_result", "result": result}
 
+        self._record_turn(
+            "assistant",
+            parsed.conversation_text,
+            metadata={
+                "task_level": task_profile["level"],
+                "task_score": task_profile["score"],
+                "provider": self._provider.provider_name(),
+                "model": self._provider.config.model,
+                "max_tokens": runtime_limits["max_tokens"],
+            },
+        )
+
         self._history.append(HumanMessage(content=user_message))
         self._history.append(AIMessage(content=full_text))
         await self._manage_history()
+        self._sync_session_state()
 
         metrics = build_runtime_metrics(
             response=None,
@@ -420,6 +776,9 @@ class Orchestrator:
             delegations=delegation_results,
             elapsed_ms=(time.perf_counter() - started) * 1000,
             clarification_requested=False,
+            task_complexity=task_profile["level"],
+            token_budget=runtime_limits["max_tokens"],
+            memory_turns=len(self._history),
         )
 
         yield {
@@ -582,6 +941,11 @@ class Orchestrator:
             else:
                 self._conversation_summary = new_summary
 
+            try:
+                set_shared_state_value(self._session_id, "conversation_summary", self._conversation_summary)
+            except Exception as exc:
+                logger.debug("Failed to persist conversation summary: %s", exc)
+
             self._history = to_keep
             logger.info(
                 "Summarized %d messages into %d chars, keeping %d recent",
@@ -596,6 +960,15 @@ class Orchestrator:
 
         self._history.clear()
         self._conversation_summary = ""
+        try:
+            set_shared_state_value(self._session_id, "conversation_summary", "")
+            set_shared_state_value(self._session_id, "current_goal", "")
+            set_shared_state_value(self._session_id, "current_focus", "")
+            set_shared_state_value(self._session_id, "last_role", "")
+            set_shared_state_value(self._session_id, "last_response_summary", "")
+            set_shared_state_value(self._session_id, "turn_count", 0)
+        except Exception as exc:
+            logger.debug("Failed to reset shared session state: %s", exc)
         logger.info("Conversation history cleared")
 
     def get_agent_info(self) -> dict[str, list[str]]:

@@ -6,6 +6,7 @@ import json
 import os
 import sys
 import time
+import uuid
 from pathlib import Path
 from typing import Any
 
@@ -203,7 +204,7 @@ def _print_banner(console):
 
     banner = Text()
     banner.append("Limbi", style="bold orange1")
-    banner.append(" v1.5.1", style="bold white")
+    banner.append(" v1.5.2", style="bold white")
     banner.append(" - Omni-Agent Orchestrator\n")
     banner.append("Type your prompt, or ", style="white")
     banner.append("/models", style="bold orange1")
@@ -508,7 +509,11 @@ def _ensure_runtime_api_key(state: dict[str, Any], console) -> str | None:
 def _refresh_orchestrator(state: dict[str, Any]) -> None:
     from limbi.orchestrator import Orchestrator
 
-    state["orchestrator"] = Orchestrator()
+    state["orchestrator"] = Orchestrator(session_id=state.get("session_id", "global"))
+    try:
+        state["orchestrator"]._sync_session_state()  # noqa: SLF001
+    except Exception:
+        pass
 
 
 def _configure_runtime_from_model_choice(state: dict[str, Any], console) -> None:
@@ -934,6 +939,12 @@ async def _send_message(state, message: str, console) -> None:
         summary.append("    ", style="white")
         summary.append("token usage: ", style="bold orange1")
         summary.append(str(metrics.get('total_tokens', 0)), style="white")
+        summary.append("    ", style="white")
+        summary.append("complexity: ", style="bold orange1")
+        summary.append(str(metrics.get("task_complexity", "moderate")), style="white")
+        summary.append("    ", style="white")
+        summary.append("budget: ", style="bold orange1")
+        summary.append(str(metrics.get("runtime_token_budget", 0)), style="white")
         console.print(Panel(summary, border_style="orange1", padding=(0, 1)))
 
 
@@ -1090,7 +1101,7 @@ Type a natural-language prompt to talk to Limbi.
     default=False,
     help="Skip workspace trust prompt (for CI/automation).",
 )
-@click.version_option(version="1.5.1", prog_name="limbi")
+@click.version_option(version="1.5.2", prog_name="limbi")
 def main(
     prompt: str | None,
     provider: str | None,
@@ -1202,11 +1213,13 @@ def main(
     from limbi.audit_log import init_db
 
     init_db()
-    orchestrator = Orchestrator()
+    session_id = f"session-{uuid.uuid4().hex[:12]}"
+    orchestrator = Orchestrator(session_id=session_id)
 
     provider_obj = _limbi.get_llm_provider()
     state = {
         "orchestrator": orchestrator,
+        "session_id": session_id,
         "provider": provider_obj.provider_name(),
         "model": provider_obj.config.model,
         "base_url": provider_obj.config.base_url,
@@ -1214,6 +1227,10 @@ def main(
         "ws_config": ws_config,
         "save_config": save_config,
     }
+    try:
+        orchestrator._sync_session_state()  # noqa: SLF001
+    except Exception:
+        pass
     console.print(
         f"[dim]Provider:[/] [bold]{provider_obj.provider_name()}[/] "
         f"[dim]Model:[/] [bold]{provider_obj.config.model}[/] "

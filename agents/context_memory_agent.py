@@ -22,6 +22,19 @@ _hot_cache: dict[str, list[dict[str, Any]]] = {}
 _agent_subscriptions: dict[str, set[str]] = {}       
 
 
+def _serialize_state_value(value: Any) -> str:
+    if isinstance(value, str):
+        return value
+    return json.dumps(value, ensure_ascii=False)
+
+
+def _deserialize_state_value(value: str) -> Any:
+    try:
+        return json.loads(value)
+    except (json.JSONDecodeError, TypeError):
+        return value
+
+
 def _get_conn() -> sqlite3.Connection:
     conn = sqlite3.connect(_CTX_DB_PATH, check_same_thread=False)
     conn.row_factory = sqlite3.Row
@@ -155,6 +168,117 @@ def publish_agent_result(
     return entry_id
 
 
+def set_shared_state_value(
+    session_id: str,
+    key: str,
+    value: Any,
+) -> None:
+    if not session_id:
+        session_id = "global"
+    if not key:
+        return
+
+    now = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
+    serialized = _serialize_state_value(value)
+
+    with _lock:
+        conn = _get_conn()
+        conn.execute(
+            """INSERT INTO session_state (session_id, key, value, updated_at)
+               VALUES (?, ?, ?, ?)
+               ON CONFLICT(session_id, key)
+               DO UPDATE SET value = excluded.value, updated_at = excluded.updated_at""",
+            (session_id, key, serialized, now),
+        )
+        conn.commit()
+        conn.close()
+
+
+def get_shared_state_value(session_id: str, key: str = "") -> dict[str, Any]:
+    if not session_id:
+        session_id = "global"
+
+    with _lock:
+        conn = _get_conn()
+        if key:
+            row = conn.execute(
+                "SELECT * FROM session_state WHERE session_id = ? AND key = ?",
+                (session_id, key),
+            ).fetchone()
+            conn.close()
+            if not row:
+                return {"key": key, "value": None, "session_id": session_id}
+            return {
+                "key": key,
+                "value": _deserialize_state_value(row["value"]),
+                "updated_at": row["updated_at"],
+                "session_id": session_id,
+            }
+
+        rows = conn.execute(
+            "SELECT * FROM session_state WHERE session_id = ? ORDER BY key",
+            (session_id,),
+        ).fetchall()
+        conn.close()
+        state: dict[str, Any] = {}
+        for row in rows:
+            state[row["key"]] = _deserialize_state_value(row["value"])
+        return {"state": state, "session_id": session_id}
+
+
+def record_session_turn(
+    session_id: str,
+    role: str,
+    content: str,
+    *,
+    source_agent: str = "limbi",
+    priority: str = "normal",
+    metadata: dict[str, Any] | None = None,
+    target_agents: list[str] | None = None,
+    max_chars: int = 1200,
+) -> str:
+    if not content.strip():
+        return ""
+
+    short_content = content.strip()
+    if len(short_content) > max_chars:
+        short_content = short_content[: max_chars - 3].rstrip() + "..."
+
+    entry_id = ContextMemoryAgent().handle_store_context(  # type: ignore[call-arg]
+        content=short_content,
+        source_agent=source_agent,
+        entry_type=f"{role}_turn",
+        tags=["session_turn", role, source_agent],
+        target_agents=target_agents or ["*"],
+        priority=priority,
+        session_id=session_id,
+        metadata=metadata or {},
+    )["entry_id"]
+
+    current_count = get_shared_state_value(session_id, "turn_count").get("value") or 0
+    set_shared_state_value(session_id, "turn_count", int(current_count) + 1)
+    set_shared_state_value(session_id, "last_role", role)
+    set_shared_state_value(
+        session_id,
+        f"last_{role}_message",
+        {
+            "content": short_content,
+            "source_agent": source_agent,
+            "metadata": metadata or {},
+        },
+    )
+
+    if role == "user":
+        current_goal = get_shared_state_value(session_id, "current_goal").get("value")
+        if not current_goal:
+            set_shared_state_value(session_id, "current_goal", short_content)
+        set_shared_state_value(session_id, "current_focus", short_content)
+    else:
+        set_shared_state_value(session_id, "last_response_summary", short_content)
+
+    return entry_id
+
+
 def get_session_context(session_id: str = "global", for_agent: str = "") -> str:
 
     entries = _hot_cache.get(session_id, [])
@@ -172,16 +296,38 @@ def get_session_context(session_id: str = "global", for_agent: str = "") -> str:
             conn.close()
         entries = [dict(r) for r in rows]
 
-    if not entries:
-        return ""
+    state_snapshot = get_shared_state_value(session_id).get("state", {})
 
     lines = ["## Shared Agent Context (this session)"]
+    if state_snapshot:
+        lines.append("### Session State")
+        for key in (
+            "current_goal",
+            "current_focus",
+            "provider",
+            "model",
+            "turn_count",
+            "conversation_summary",
+            "last_role",
+            "last_response_summary",
+        ):
+            value = state_snapshot.get(key)
+            if value:
+                rendered = value if isinstance(value, str) else json.dumps(value, ensure_ascii=False)
+                if len(rendered) > 700:
+                    rendered = rendered[:697].rstrip() + "..."
+                lines.append(f"- **{key}**: {rendered}")
+
+    if not entries:
+        return "\n".join(lines) if len(lines) > 1 else ""
+
+    lines.append("### Recent Shared Context")
     for e in entries[-15:]:
         source = e.get("source_agent", "?")
         content = e.get("content", "")
         priority = e.get("priority", "normal")
-        marker = "" if priority == "high" else "    "
-        lines.append(f"- {marker} **{source}**: {content}")
+        marker = "high" if priority == "high" else "normal"
+        lines.append(f"- [{marker}] **{source}**: {content}")
 
     return "\n".join(lines)
 
