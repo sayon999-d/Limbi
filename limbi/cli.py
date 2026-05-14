@@ -20,6 +20,12 @@ _PROVIDER_CHOICES = {
         "type": "local",
         "description": "Local models via Ollama",
     },
+    "ollama_cloud": {
+        "model": "gpt-oss:120b-cloud",
+        "base_url": "https://ollama.com/v1",
+        "type": "cloud",
+        "description": "Ollama Cloud models",
+    },
     "openrouter": {
         "model": "openai/gpt-4o",
         "base_url": "https://openrouter.ai/api/v1",
@@ -129,6 +135,60 @@ _PROVIDER_CHOICES = {
         "description": "Cohere (Command-R)",
     },
 }
+
+_LOW_MEMORY_LOCAL_MODELS = {
+    "default": [
+        "llama3.2:3b",
+        "qwen2.5:3b",
+        "phi3.5-mini-instruct",
+        "gemma2:2b",
+    ],
+    "ollama": [
+        "llama3.2:3b",
+        "qwen2.5:3b",
+        "phi3.5-mini-instruct",
+        "gemma2:2b",
+    ],
+    "lmstudio": [
+        "Llama-3.2-3B-Instruct",
+        "Qwen2.5-3B-Instruct",
+        "Phi-3.5-mini-instruct",
+        "Gemma-2-2B-it",
+    ],
+    "vllm": [
+        "Llama-3.2-3B-Instruct",
+        "Qwen2.5-3B-Instruct",
+        "Phi-3.5-mini-instruct",
+        "Gemma-2-2B-it",
+    ],
+    "localai": [
+        "Llama-3.2-3B-Instruct",
+        "Qwen2.5-3B-Instruct",
+        "Phi-3.5-mini-instruct",
+        "Gemma-2-2B-it",
+    ],
+    "koboldcpp": [
+        "llama3.2:3b",
+        "qwen2.5:3b",
+        "phi3.5-mini-instruct",
+        "gemma2:2b",
+    ],
+    "llamacpp": [
+        "llama3.2:3b",
+        "qwen2.5:3b",
+        "phi3.5-mini-instruct",
+        "gemma2:2b",
+    ],
+}
+
+_OLLAMA_CLOUD_MODELS = [
+    "deepseek-v3.1:671b-cloud",
+    "qwen3-coder:480b-cloud",
+    "gpt-oss:120b-cloud",
+    "gpt-oss:20b-cloud",
+    "glm-4.7:cloud",
+    "minimax-m2.1:cloud",
+]
 
 
 def _get_console():
@@ -359,6 +419,8 @@ def _resolve_model_choice(choice: str) -> str:
         "claude": "anthropic",
         "gemini": "google",
         "azure_openai": "azure",
+        "ollama cloud": "ollama_cloud",
+        "ollama-cloud": "ollama_cloud",
         "openai-compatible": "openai_compatible",
         "openai compatible": "openai_compatible",
     }
@@ -417,6 +479,39 @@ def _configure_runtime_from_model_choice(state: dict[str, Any], console) -> None
             help_text="Use Up/Down to move, then Enter to choose.",
         )
         model = model_item["name"]
+    elif provider == "ollama_cloud":
+        model_item = _select_from_menu(
+            console,
+            "Choose an Ollama Cloud model",
+            [
+                {"name": item, "label": item, "details": "hosted by Ollama Cloud; larger models are listed first"}
+                for item in _OLLAMA_CLOUD_MODELS
+            ],
+            default_index=0,
+            help_text="These cloud models run on Ollama's hosted service and need an API key. Bigger models usually give stronger answers.",
+        )
+        model = model_item["name"]
+    elif defaults.get("type") == "local":
+        suggestions = _LOW_MEMORY_LOCAL_MODELS.get(provider, _LOW_MEMORY_LOCAL_MODELS["default"])
+        model_item = _select_from_menu(
+            console,
+            f"Choose a low-memory model for {provider}",
+            [
+                {"name": item, "label": item, "details": "recommended for laptops with 16GB RAM"}
+                for item in suggestions
+            ]
+            + [{"name": "__custom__", "label": "Custom model name", "details": "type your own model id"}],
+            default_index=0,
+            help_text="These are small local models that keep Limbi fast on modest hardware.",
+        )
+        if model_item["name"] == "__custom__":
+            model = click.prompt(
+                "Choose model",
+                default=defaults.get("model") or state.get("model") or suggestions[0],
+                type=str,
+            ).strip()
+        else:
+            model = model_item["name"]
     else:
         model = click.prompt(
             "Choose model",
@@ -425,8 +520,8 @@ def _configure_runtime_from_model_choice(state: dict[str, Any], console) -> None
         ).strip()
 
     _setup_env_overrides(provider, model, api_key, base_url)
-    if provider_requires_api_key(provider, base_url) and not os.environ.get("LLM_MAX_TOKENS"):
-        os.environ["LLM_MAX_TOKENS"] = str(min(int(state["ws_config"].get("max_tokens", 2048)), 1024))
+    if not os.environ.get("LLM_MAX_TOKENS"):
+        os.environ["LLM_MAX_TOKENS"] = str(min(int(state["ws_config"].get("max_tokens", 1024)), 1024))
 
     state["provider"] = provider
     state["model"] = model
@@ -906,7 +1001,7 @@ def main(
         os.environ.get("LLM_BASE_URL"),
     ):
         if not os.environ.get("LLM_MAX_TOKENS"):
-            workspace_max_tokens = int(ws_config.get("max_tokens", 2048))
+            workspace_max_tokens = int(ws_config.get("max_tokens", 1024))
             os.environ["LLM_MAX_TOKENS"] = str(min(workspace_max_tokens, 1024))
 
     try:

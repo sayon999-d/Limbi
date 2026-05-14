@@ -16,6 +16,39 @@ logger = logging.getLogger("limbi.agents.code")
 
 _TOOL_REGISTRY: dict[str, dict[str, Any]] = {}
 
+_LANGUAGE_EXTENSIONS: dict[str, str] = {
+    "python": ".py",
+    "py": ".py",
+    "javascript": ".js",
+    "js": ".js",
+    "typescript": ".ts",
+    "ts": ".ts",
+    "tsx": ".tsx",
+    "jsx": ".jsx",
+    "go": ".go",
+    "golang": ".go",
+    "rust": ".rs",
+    "rs": ".rs",
+    "java": ".java",
+    "c": ".c",
+    "cpp": ".cpp",
+    "c++": ".cpp",
+    "rb": ".rb",
+    "ruby": ".rb",
+    "php": ".php",
+    "swift": ".swift",
+    "kt": ".kt",
+    "kotlin": ".kt",
+    "bash": ".sh",
+    "shell": ".sh",
+    "sh": ".sh",
+    "html": ".html",
+    "css": ".css",
+    "json": ".json",
+    "yaml": ".yaml",
+    "yml": ".yml",
+}
+
 class CodeAgent(BaseAgent):
 
     agent_name = "code_agent"
@@ -184,6 +217,52 @@ class CodeAgent(BaseAgent):
                 return candidate.strip()
         raise ValueError("'path' is required")
 
+    def _workspace_root(self) -> Path:
+        return Path(
+            os.getenv("LIMBI_WORKSPACE_ROOT")
+            or os.getenv("WORKSPACE_ROOT")
+            or Path.cwd()
+        ).expanduser().resolve()
+
+    def _safe_target(self, path: str) -> Path:
+        target = Path(path).expanduser().resolve()
+        workspace_root = self._workspace_root()
+        allow_outside = os.getenv("LIMBI_ALLOW_OUTSIDE_WORKSPACE", "").strip().lower() in ("1", "true", "yes", "on")
+        if allow_outside or workspace_root == target or workspace_root in target.parents:
+            return target
+        raise PermissionError(f"Path '{target}' is outside the workspace root '{workspace_root}'")
+
+    def _infer_language(self, language: str = "", content: str = "", path: str = "") -> str:
+        explicit = (language or "").strip().lower()
+        if explicit:
+            return explicit
+        suffix = os.path.splitext(path)[1].lower()
+        if suffix:
+            for key, ext in _LANGUAGE_EXTENSIONS.items():
+                if ext == suffix:
+                    return key
+        snippet = content.lstrip()
+        if snippet.startswith("#!/usr/bin/env python") or "import " in content or "def " in content or "class " in content:
+            return "python"
+        if "console.log" in content or "function " in content or "const " in content or "let " in content or "var " in content:
+            return "javascript"
+        if "interface " in content or "type " in content:
+            return "typescript"
+        if "package main" in content or "func main" in content:
+            return "go"
+        if "#!/bin/bash" in content or "set -e" in content:
+            return "bash"
+        return ""
+
+    def _normalize_target_path(self, path: str, language: str = "", content: str = "") -> tuple[str, str]:
+        resolved = Path(self._resolve_path(path)).expanduser().resolve()
+        inferred_language = self._infer_language(language, content, str(resolved))
+        if not resolved.suffix and inferred_language:
+            suffix = _LANGUAGE_EXTENSIONS.get(inferred_language.lower(), "")
+            if suffix:
+                resolved = resolved.with_suffix(suffix)
+        return str(resolved), inferred_language
+
     def handle_write_to_file(
         self,
         path: str = "",
@@ -197,7 +276,8 @@ class CodeAgent(BaseAgent):
             raise ValueError("'content' is required")
 
         from pathlib import Path as P
-        target = P(path).resolve()
+        target_path, inferred_language = self._normalize_target_path(path, language=language, content=content)
+        target = self._safe_target(target_path)
         target.parent.mkdir(parents=True, exist_ok=True)
 
         if target.exists() and not overwrite:
@@ -212,7 +292,7 @@ class CodeAgent(BaseAgent):
             "message": f"Wrote '{target.name}' ({len(content)} chars, {len(content.splitlines())} lines)",
             "written": True,
             "path": str(target),
-            "language": language or target.suffix.lstrip("."),
+            "language": inferred_language or language or target.suffix.lstrip("."),
             "lines": len(content.splitlines()),
         }
 

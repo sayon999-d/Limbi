@@ -609,6 +609,9 @@ async def ingest_codebase(req: IngestRequest, request: Request):
     try:
         result = orchestrator.ingest_codebase(req.directory)
         return {"status": "success", **result}
+    except PermissionError as exc:
+        logger.warning("RAG ingest denied: %s", exc)
+        raise HTTPException(status_code=403, detail="Directory is outside the trusted workspace")
     except Exception as exc:
         logger.exception("RAG ingest failed: %s", exc)
         raise HTTPException(status_code=400, detail="RAG ingest failed")

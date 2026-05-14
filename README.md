@@ -46,7 +46,7 @@ Limbi was built to solve that coordination problem.
 
 Instead of asking one general model to do every job alone, Limbi lets the model act as an orchestrator. It can talk normally, choose the right agent, run agent actions, collect the result, store the result in shared context memory, and continue the workflow with better context.
 
-Limbi also understands more than one local model style. If you run Ollama, LM Studio, vLLM, LocalAI, KoboldCpp, llama.cpp, or any other local OpenAI-compatible server, Limbi can treat it as a local provider and skip API-key prompts when the endpoint is clearly local.
+Limbi also understands more than one local model style. If you run Ollama, Ollama Cloud, LM Studio, vLLM, LocalAI, KoboldCpp, llama.cpp, or any other local OpenAI-compatible server, Limbi can treat it as a local provider and skip API-key prompts when the endpoint is clearly local.
 
 Limbi also supports model routers and hosted model catalogs such as OpenRouter, Hugging Face Inference Providers, Chutes, Bytez, OpenAI, Anthropic, Google, Groq, Together AI, Mistral, Azure OpenAI, and Cohere. In `/models`, Limbi can query the provider catalog after you enter a valid key and show the model IDs you can use.
 
@@ -160,7 +160,7 @@ The `.limbi/` workspace stores local project state. It contains configuration, a
 
 The orchestrator is the core controller. It prepares the LLM prompt, injects agent registry data, reads memory, retrieves optional RAG context, executes delegations, retries failures, and returns the final response.
 
-The provider layer hides differences between LLM vendors. Users can move between local Ollama models, local OpenAI-compatible servers such as LM Studio, vLLM, LocalAI, KoboldCpp, or llama.cpp, remote routers such as OpenRouter, Hugging Face, Chutes, and Bytez, and hosted providers such as OpenAI, Anthropic, Google, Groq, Mistral, Azure OpenAI, Cohere, Together AI, and OpenAI-compatible endpoints.
+The provider layer hides differences between LLM vendors. Users can move between local Ollama models, Ollama Cloud models, local OpenAI-compatible servers such as LM Studio, vLLM, LocalAI, KoboldCpp, or llama.cpp, remote routers such as OpenRouter, Hugging Face, Chutes, and Bytez, and hosted providers such as OpenAI, Anthropic, Google, Groq, Mistral, Azure OpenAI, Cohere, Together AI, and OpenAI-compatible endpoints.
 
 The payload parser extracts structured agent delegation blocks from the LLM output.
 
@@ -462,6 +462,15 @@ ollama serve
 ollama pull llama3.2:3b
 export LLM_PROVIDER=ollama
 export LLM_MODEL=llama3.2:3b
+```
+
+For Ollama Cloud:
+
+```bash
+python -m pip install "limbi[openai]"
+export LLM_PROVIDER=ollama_cloud
+export LLM_BASE_URL="https://ollama.com/v1"
+export OLLAMA_API_KEY="your_ollama_cloud_key"
 ```
 
 For other local model servers, use the OpenAI-compatible provider. Limbi treats localhost endpoints as local, so it will not ask for an API key when the base URL is clearly local.

@@ -18,8 +18,8 @@ _DEFAULT_CONFIG = {
     "provider": "ollama",
     "model": "llama3.2:3b",
     "base_url": "http://localhost:11434",
-    "temperature": 0.2,
-    "max_tokens": 2048,
+    "temperature": 0.1,
+    "max_tokens": 1024,
     "session_ttl_hours": 24,
     "auto_publish_context": True,
 }

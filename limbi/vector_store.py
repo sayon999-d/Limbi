@@ -49,6 +49,21 @@ class VectorStore:
 
         self._content_hashes: dict[str, str] = {}
 
+    def _workspace_root(self) -> Path:
+        return Path(
+            os.getenv("LIMBI_WORKSPACE_ROOT")
+            or os.getenv("WORKSPACE_ROOT")
+            or Path.cwd()
+        ).expanduser().resolve()
+
+    def _ensure_within_workspace(self, directory: Path) -> Path:
+        allow_outside = os.getenv("LIMBI_ALLOW_OUTSIDE_WORKSPACE", "").strip().lower() in ("1", "true", "yes", "on")
+        workspace_root = self._workspace_root()
+        resolved = directory.expanduser().resolve()
+        if allow_outside or resolved == workspace_root or workspace_root in resolved.parents:
+            return resolved
+        raise PermissionError(f"Directory '{resolved}' is outside the workspace root '{workspace_root}'")
+
     def _ensure_ready(self) -> None:
         if self._client is not None:
             return
@@ -82,7 +97,7 @@ class VectorStore:
         self._ensure_ready()
         assert self._collection is not None
 
-        dir_path = Path(directory).expanduser().resolve()
+        dir_path = self._ensure_within_workspace(Path(directory))
         if not dir_path.is_dir():
             raise ValueError(f"Not a directory: {dir_path}")
 

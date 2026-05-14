@@ -23,6 +23,39 @@ _CATEGORIES: dict[str, list[str]] = {
     "devops": ["Dockerfile", "Makefile", ".sh", ".bash", "docker-compose.yml"],
 }
 
+_LANGUAGE_EXTENSIONS: dict[str, str] = {
+    "python": ".py",
+    "py": ".py",
+    "javascript": ".js",
+    "js": ".js",
+    "typescript": ".ts",
+    "ts": ".ts",
+    "tsx": ".tsx",
+    "jsx": ".jsx",
+    "go": ".go",
+    "golang": ".go",
+    "rust": ".rs",
+    "rs": ".rs",
+    "java": ".java",
+    "c": ".c",
+    "cpp": ".cpp",
+    "c++": ".cpp",
+    "rb": ".rb",
+    "ruby": ".rb",
+    "php": ".php",
+    "swift": ".swift",
+    "kt": ".kt",
+    "kotlin": ".kt",
+    "bash": ".sh",
+    "shell": ".sh",
+    "sh": ".sh",
+    "html": ".html",
+    "css": ".css",
+    "json": ".json",
+    "yaml": ".yaml",
+    "yml": ".yml",
+}
+
 class FileAgent(BaseAgent):
 
     agent_name = "file_agent"
@@ -62,6 +95,7 @@ class FileAgent(BaseAgent):
             or os.getenv("WORKSPACE_ROOT")
             or Path.cwd()
         ).expanduser().resolve()
+        allow_outside = os.getenv("LIMBI_ALLOW_OUTSIDE_WORKSPACE", "").strip().lower() in ("1", "true", "yes", "on")
         for candidate in candidates:
             if isinstance(candidate, str) and candidate.strip():
                 raw = Path(candidate.strip()).expanduser()
@@ -73,9 +107,48 @@ class FileAgent(BaseAgent):
                     suffix = raw_text.removeprefix("/workspaces").lstrip("/")
                     return str((workspace_root / suffix).resolve())
                 if raw.is_absolute():
-                    return str(raw.resolve())
+                    resolved = raw.resolve()
+                    if allow_outside:
+                        return str(resolved)
+                    if workspace_root in resolved.parents or resolved == workspace_root:
+                        return str(resolved)
+                    raise PermissionError(f"Path '{resolved}' is outside the workspace root '{workspace_root}'")
                 return str((workspace_root / raw).resolve())
         raise ValueError("A file 'path' is required")
+
+    def _safe_workspace_target(self, path: str = "", **kw: Any) -> Path:
+        return Path(self._resolve_path(path, **kw))
+
+    def _infer_language(self, language: str = "", content: str = "", path: str = "") -> str:
+        explicit = (language or "").strip().lower()
+        if explicit:
+            return explicit
+        suffix = Path(path).suffix.lower()
+        if suffix:
+            for key, ext in _LANGUAGE_EXTENSIONS.items():
+                if ext == suffix:
+                    return key
+        snippet = content.lstrip()
+        if snippet.startswith("#!/usr/bin/env python") or "import " in content or "def " in content or "class " in content:
+            return "python"
+        if "console.log" in content or "function " in content or "const " in content or "let " in content or "var " in content:
+            return "javascript"
+        if "interface " in content or "type " in content:
+            return "typescript"
+        if "package main" in content or "func main" in content:
+            return "go"
+        if "#!/bin/bash" in content or "set -e" in content:
+            return "bash"
+        return ""
+
+    def _normalize_target_path(self, path: str, language: str = "", content: str = "") -> tuple[str, str]:
+        resolved = Path(self._resolve_path(path)).expanduser().resolve()
+        inferred_language = self._infer_language(language, content, str(resolved))
+        if not resolved.suffix and inferred_language:
+            suffix = _LANGUAGE_EXTENSIONS.get(inferred_language.lower(), "")
+            if suffix:
+                resolved = resolved.with_suffix(suffix)
+        return str(resolved), inferred_language
 
     def handle_list_directory(
         self,
@@ -85,7 +158,7 @@ class FileAgent(BaseAgent):
         **kw: Any,
     ) -> dict[str, Any]:
 
-        target = Path(path).resolve()
+        target = self._safe_workspace_target(path, **kw)
         if not target.exists():
             raise ValueError(f"Path '{path}' does not exist")
         if not target.is_dir():
@@ -148,7 +221,7 @@ class FileAgent(BaseAgent):
         if not path:
             raise ValueError("A file 'path' is required")
 
-        target = Path(path).resolve()
+        target = self._safe_workspace_target(path, **kw)
         if not target.exists():
             raise ValueError(f"File '{path}' does not exist")
         if not target.is_file():
@@ -202,7 +275,7 @@ class FileAgent(BaseAgent):
         **kw: Any,
     ) -> dict[str, Any]:
 
-        target = Path(path).resolve()
+        target = self._safe_workspace_target(path, **kw)
         if not target.exists():
             raise ValueError(f"Path '{path}' does not exist")
 
@@ -257,8 +330,8 @@ class FileAgent(BaseAgent):
         if not file_a or not file_b:
             raise ValueError("Both 'file_a' and 'file_b' paths are required")
 
-        path_a = Path(file_a).resolve()
-        path_b = Path(file_b).resolve()
+        path_a = self._safe_workspace_target(file_a, **kw)
+        path_b = self._safe_workspace_target(file_b, **kw)
 
         if not path_a.exists() or not path_b.exists():
             raise ValueError("One or both files do not exist")
@@ -295,11 +368,13 @@ class FileAgent(BaseAgent):
         self,
         path: str = "",
         content: str = "",
+        language: str = "",
         overwrite: bool = False,
         **kw: Any,
     ) -> dict[str, Any]:
         path = self._resolve_path(path, **kw)
-        target = Path(path).resolve()
+        target_path, inferred_language = self._normalize_target_path(path, language=language, content=content)
+        target = self._safe_workspace_target(target_path)
 
         if target.exists() and not overwrite:
             return {
@@ -315,6 +390,7 @@ class FileAgent(BaseAgent):
             "message": f"File '{target.name}' created ({len(content)} chars)",
             "created": True,
             "path": str(target),
+            "language": inferred_language or Path(target).suffix.lstrip("."),
             "size": self._human_size(len(content.encode("utf-8"))),
             "lines": len(content.split("\n")),
         }
@@ -323,11 +399,13 @@ class FileAgent(BaseAgent):
         self,
         path: str = "",
         content: str = "",
+        language: str = "",
         append: bool = False,
         **kw: Any,
     ) -> dict[str, Any]:
         path = self._resolve_path(path, **kw)
-        target = Path(path).resolve()
+        target_path, inferred_language = self._normalize_target_path(path, language=language, content=content)
+        target = self._safe_workspace_target(target_path)
         target.parent.mkdir(parents=True, exist_ok=True)
 
         if append and target.exists():
@@ -339,6 +417,7 @@ class FileAgent(BaseAgent):
         return {
             "message": f"{'Appended to' if append else 'Wrote'} '{target.name}' ({len(content)} chars)",
             "path": str(target),
+            "language": inferred_language or target.suffix.lstrip("."),
             "size": self._human_size(len(content.encode("utf-8"))),
             "lines": len(content.split("\n")),
         }
@@ -347,16 +426,18 @@ class FileAgent(BaseAgent):
         self,
         path: str = "",
         content: str = "",
+        language: str = "",
         append: bool = False,
         overwrite: bool = True,
         **kw: Any,
     ) -> dict[str, Any]:
-        return self.handle_write_file(path=path, content=content, append=append, **kw)
+        return self.handle_write_file(path=path, content=content, language=language, append=append, **kw)
 
     def handle_save(
         self,
         path: str = "",
         content: str = "",
+        language: str = "",
         append: bool = False,
         overwrite: bool = True,
         **kw: Any,
@@ -364,6 +445,7 @@ class FileAgent(BaseAgent):
         return self.handle_write_to_file(
             path=path,
             content=content,
+            language=language,
             append=append,
             overwrite=overwrite,
             **kw,
@@ -379,7 +461,7 @@ class FileAgent(BaseAgent):
         if not path:
             raise ValueError("A file 'path' is required")
 
-        target = Path(path).resolve()
+        target = self._safe_workspace_target(path, **kw)
         if not target.exists():
             raise ValueError(f"File '{path}' does not exist")
         if not target.is_file():
@@ -409,7 +491,7 @@ class FileAgent(BaseAgent):
         if not path:
             raise ValueError("A file 'path' is required")
 
-        target = Path(path).resolve()
+        target = self._safe_workspace_target(path, **kw)
         if not target.exists():
             return {"message": f"File '{path}' does not exist", "deleted": False}
 
@@ -432,7 +514,7 @@ class FileAgent(BaseAgent):
         if not path:
             raise ValueError("A file 'path' is required")
 
-        target = Path(path).resolve()
+        target = self._safe_workspace_target(path, **kw)
         if not target.exists():
             raise ValueError(f"File '{path}' does not exist")
         if not target.is_file():
@@ -486,7 +568,7 @@ class FileAgent(BaseAgent):
         if not path or not new_name:
             raise ValueError("Both 'path' and 'new_name' are required")
 
-        source = Path(path).resolve()
+        source = self._safe_workspace_target(path, **kw)
         if not source.exists():
             raise ValueError(f"'{path}' does not exist")
 
@@ -517,11 +599,11 @@ class FileAgent(BaseAgent):
         if not source or not destination:
             raise ValueError("Both 'source' and 'destination' are required")
 
-        src = Path(source).resolve()
+        src = self._safe_workspace_target(source, **kw)
         if not src.exists():
             raise ValueError(f"Source '{source}' does not exist")
 
-        dst = Path(destination).resolve()
+        dst = self._safe_workspace_target(destination, **kw)
         dst.parent.mkdir(parents=True, exist_ok=True)
 
         if src.is_dir():
@@ -547,11 +629,11 @@ class FileAgent(BaseAgent):
         if not source or not destination:
             raise ValueError("Both 'source' and 'destination' are required")
 
-        src = Path(source).resolve()
+        src = self._safe_workspace_target(source, **kw)
         if not src.exists():
             raise ValueError(f"Source '{source}' does not exist")
 
-        dst = Path(destination).resolve()
+        dst = self._safe_workspace_target(destination, **kw)
         dst.parent.mkdir(parents=True, exist_ok=True)
 
         shutil.move(str(src), str(dst))
@@ -571,7 +653,7 @@ class FileAgent(BaseAgent):
         if not path:
             raise ValueError("A directory 'path' is required")
 
-        target = Path(path).resolve()
+        target = self._safe_workspace_target(path, **kw)
         if target.exists():
             return {
                 "message": f"Directory '{path}' already exists",
@@ -598,7 +680,7 @@ class FileAgent(BaseAgent):
         if not path:
             raise ValueError("A directory 'path' is required")
 
-        target = Path(path).resolve()
+        target = self._safe_workspace_target(path, **kw)
         if not target.exists():
             return {"message": f"Directory '{path}' does not exist", "deleted": False}
         if not target.is_dir():
@@ -629,7 +711,7 @@ class FileAgent(BaseAgent):
         if not path or not mode:
             raise ValueError("Both 'path' and 'mode' (e.g. '755') are required")
 
-        target = Path(path).resolve()
+        target = self._safe_workspace_target(path, **kw)
         if not target.exists():
             raise ValueError(f"'{path}' does not exist")
 
@@ -658,7 +740,7 @@ class FileAgent(BaseAgent):
         if not path:
             raise ValueError("A file 'path' is required")
 
-        target = Path(path).resolve()
+        target = self._safe_workspace_target(path, **kw)
         if not target.exists():
             raise ValueError(f"File '{path}' does not exist")
 

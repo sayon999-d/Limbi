@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 import logging
 import os
+import re
 from abc import ABC, abstractmethod
 from dataclasses import dataclass
 from typing import Any
@@ -22,22 +23,27 @@ class ProviderConfig:
     model: str = ""
     base_url: str = ""
     api_key: str = ""
-    temperature: float = 0.2
-    max_tokens: int = 2048
+    temperature: float = 0.1
+    max_tokens: int = 1024
 
     azure_deployment: str = ""
     azure_api_version: str = "2024-06-01"
 
     @classmethod
     def from_env(cls) -> "ProviderConfig":
+        provider = os.getenv("LLM_PROVIDER", "ollama").lower().strip()
+        base_url = os.getenv("LLM_BASE_URL", os.getenv("OLLAMA_BASE_URL", "http://localhost:11434"))
+        is_ollama_cloud = provider == "ollama_cloud" or "ollama.com" in base_url.lower()
+        default_model = "gpt-oss:120b-cloud" if is_ollama_cloud else "llama3.2:3b"
+        default_base_url = "https://ollama.com/v1" if is_ollama_cloud else "http://localhost:11434"
 
         return cls(
-            provider=os.getenv("LLM_PROVIDER", "ollama").lower().strip(),
-            model=os.getenv("LLM_MODEL", os.getenv("OLLAMA_MODEL", "llama3.2:3b")),
-            base_url=os.getenv("LLM_BASE_URL", os.getenv("OLLAMA_BASE_URL", "http://localhost:11434")),
-            api_key=os.getenv("LLM_API_KEY", ""),
-            temperature=float(os.getenv("LLM_TEMPERATURE", "0.2")),
-            max_tokens=int(os.getenv("LLM_MAX_TOKENS", "2048")),
+            provider=provider,
+            model=os.getenv("LLM_MODEL", os.getenv("OLLAMA_MODEL", default_model)),
+            base_url=base_url or default_base_url,
+            api_key=os.getenv("LLM_API_KEY", os.getenv("OLLAMA_API_KEY", "")),
+            temperature=float(os.getenv("LLM_TEMPERATURE", "0.1")),
+            max_tokens=int(os.getenv("LLM_MAX_TOKENS", "1024")),
             azure_deployment=os.getenv("AZURE_DEPLOYMENT", ""),
             azure_api_version=os.getenv("AZURE_API_VERSION", "2024-06-01"),
         )
@@ -78,6 +84,22 @@ class OllamaProvider(BaseLLMProvider):
             base_url=self.config.base_url or "http://localhost:11434",
             temperature=self.config.temperature,
             num_predict=self.config.max_tokens,
+        )
+
+
+class OllamaCloudProvider(BaseLLMProvider):
+
+    def provider_name(self) -> str:
+        return "ollama_cloud"
+
+    def get_chat_model(self) -> BaseChatModel:
+        from langchain_openai import ChatOpenAI
+        return ChatOpenAI(
+            model=self.config.model or "gpt-oss:120b-cloud",
+            api_key=self.config.api_key,
+            base_url=self.config.base_url or "https://ollama.com/v1",
+            temperature=self.config.temperature,
+            max_tokens=self.config.max_tokens,
         )
 
 class OpenAIProvider(BaseLLMProvider):
@@ -279,6 +301,7 @@ class OpenAICompatibleProvider(BaseLLMProvider):
 
 _PROVIDER_MAP: dict[str, type[BaseLLMProvider]] = {
     "ollama": OllamaProvider,
+    "ollama_cloud": OllamaCloudProvider,
     "openai": OpenAIProvider,
     "anthropic": AnthropicProvider,
     "claude": AnthropicProvider,
@@ -307,6 +330,8 @@ def get_llm_provider(config: ProviderConfig | None = None) -> BaseLLMProvider:
 
     cfg = config or ProviderConfig.from_env()
     provider_cls = _PROVIDER_MAP.get(cfg.provider)
+    if cfg.provider == "ollama" and not provider_is_local(cfg.provider, cfg.base_url):
+        provider_cls = OllamaCloudProvider
 
     if not provider_cls:
         logger.warning(
@@ -325,6 +350,7 @@ def list_providers() -> list[str]:
 
 
 _MODEL_LIST_ENDPOINTS = {
+    "ollama_cloud": ("https://ollama.com/api/tags", "bearer"),
     "openrouter": ("https://openrouter.ai/api/v1/models", "bearer"),
     "groq": ("https://api.groq.com/openai/v1/models", "bearer"),
     "huggingface": ("https://router.huggingface.co/v1/models", "bearer"),
@@ -340,16 +366,75 @@ def _fetch_json(url: str, headers: dict[str, str] | None = None, timeout: int = 
         return json.loads(resp.read().decode("utf-8"))
 
 
+def _parse_parameter_size(value: Any) -> float | None:
+    if value is None:
+        return None
+    if isinstance(value, (int, float)) and value > 0:
+        return float(value)
+    text = str(value).strip().lower()
+    if not text:
+        return None
+    text = text.replace(",", "")
+    match = re.search(r"(\d+(?:\.\d+)?)\s*([kmgt]?)\s*(?:params?|parameters?|b|m|k)?", text)
+    if not match:
+        return None
+    number = float(match.group(1))
+    suffix = match.group(2)
+    multiplier = {
+        "": 1.0,
+        "k": 1_000.0,
+        "m": 1_000_000.0,
+        "g": 1_000_000_000.0,
+        "t": 1_000_000_000_000.0,
+    }.get(suffix, 1.0)
+    if "b" in text and suffix == "":
+        multiplier = 1_000_000_000.0
+    return number * multiplier
+
+
+def _extract_model_size_score(row: Any) -> float | None:
+    if isinstance(row, dict):
+        for key in (
+            "parameter_size",
+            "parameterSize",
+            "parameters",
+            "params",
+            "size",
+        ):
+            score = _parse_parameter_size(row.get(key))
+            if score:
+                return score
+        details = row.get("details")
+        if isinstance(details, dict):
+            for key in ("parameter_size", "parameterSize", "parameters", "params", "size"):
+                score = _parse_parameter_size(details.get(key))
+                if score:
+                    return score
+        if isinstance(details, str):
+            score = _parse_parameter_size(details)
+            if score:
+                return score
+        for key in ("id", "modelId", "name", "slug"):
+            score = _parse_parameter_size(row.get(key))
+            if score:
+                return score
+    elif isinstance(row, str):
+        return _parse_parameter_size(row)
+    return None
+
+
 def _normalize_model_ids(payload: Any, provider: str) -> list[str]:
-    models: list[str] = []
-    rows = []
+    rows: list[Any] = []
     if isinstance(payload, dict):
         rows = payload.get("data") or payload.get("output") or payload.get("models") or []
     elif isinstance(payload, list):
         rows = payload
     if not isinstance(rows, list):
-        return models
-    for row in rows:
+        return []
+
+    ranked: list[tuple[int, float | None, str]] = []
+    seen: set[str] = set()
+    for index, row in enumerate(rows):
         if isinstance(row, str):
             model_id = row.strip()
         elif isinstance(row, dict):
@@ -362,14 +447,36 @@ def _normalize_model_ids(payload: Any, provider: str) -> list[str]:
             ).strip()
         else:
             model_id = ""
-        if model_id:
-            models.append(model_id)
-    return sorted(dict.fromkeys(models))
+        if not model_id or model_id in seen:
+            continue
+        seen.add(model_id)
+        ranked.append((index, _extract_model_size_score(row), model_id))
+
+    ranked.sort(
+        key=lambda item: (
+            1 if item[1] is None else 0,
+            -(item[1] or 0.0),
+            item[0],
+            item[2],
+        )
+    )
+    return [item[2] for item in ranked]
 
 
 def list_available_models(provider_name: str, api_key: str = "", base_url: str | None = None) -> list[str]:
     provider = (provider_name or "").lower().strip()
     resolved_base_url = (base_url or "").strip().rstrip("/")
+
+    if provider == "ollama":
+        endpoint = "https://ollama.com/api/tags" if not provider_is_local(provider, base_url) else f"{resolved_base_url or 'http://localhost:11434'}/api/tags"
+        headers: dict[str, str] = {}
+        if api_key and not provider_is_local(provider, base_url):
+            headers["Authorization"] = f"Bearer {api_key}"
+        try:
+            return _normalize_model_ids(_fetch_json(endpoint, headers=headers), provider)
+        except (HTTPError, URLError, TimeoutError, ValueError, json.JSONDecodeError, OSError) as exc:
+            logger.info("Model catalog lookup failed for %s at %s: %s", provider, endpoint, exc)
+            return []
 
     if provider in _MODEL_LIST_ENDPOINTS:
         endpoint, auth_style = _MODEL_LIST_ENDPOINTS[provider]
@@ -427,6 +534,10 @@ def _is_local_base_url(base_url: str | None) -> bool:
 
 def provider_is_local(provider_name: str, base_url: str | None = None) -> bool:
     name = (provider_name or "").lower().strip()
+    if name == "ollama":
+        if base_url and not _is_local_base_url(base_url):
+            return False
+        return True
     if name in _LOCAL_PROVIDER_NAMES:
         return True
     if name in {"openai_compatible", "azure_openai"} and _is_local_base_url(base_url):
