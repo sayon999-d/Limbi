@@ -1033,30 +1033,6 @@ python -m limbi --list-agents
 python -m twine check dist/limbi-*.tar.gz dist/limbi-*.whl
 ```
 
-## Release Command
-
-Use this when you are preparing the next release:
-
-```bash
-# 1. Push the pending commit first
-git push origin main
-
-# 2. Bump version to 1.5.2
-sed -i '' 's/1.5.2/1.5.2/g' pyproject.toml setup.py limbi/__init__.py limbi/cli.py limbi/workspace.py README.md
-
-# 3. Commit the version bump
-git add -A && git commit -m "v1.5.2: session memory and adaptive runtime improvements" && git push origin main
-
-# 4. Clean, build, check, publish
-rm -rf dist/ build/ limbi.egg-info/
-python -m build
-python -m twine check dist/*
-python -m twine upload dist/*
-
-# 5. Upgrade locally to verify
-python -m pip install --upgrade limbi
-```
-
 ## License
 
 Apache 2.0. See `LICENSE`.
