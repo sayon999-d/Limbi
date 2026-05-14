@@ -1022,17 +1022,6 @@ README.md
 LICENSE
 ```
 
-## Development Checks
-
-Use these before publishing:
-
-```bash
-python -m compileall limbi
-python -m limbi --version
-python -m limbi --list-agents
-python -m twine check dist/limbi-*.tar.gz dist/limbi-*.whl
-```
-
 ## License
 
 Apache 2.0. See `LICENSE`.
