@@ -1232,13 +1232,11 @@ class Orchestrator:
                 for r in delegation_results
             )
             feedback_msg = f"\n\n---\n** Agent Execution Results:**\n{result_summary}"
-            parsed.conversation_text += feedback_msg
-
-        if delegation_results and _looks_like_delegation_only(parsed.conversation_text):
-            synthesized = _summarize_delegation_results(delegation_results, user_message)
-            parsed.conversation_text = (
-                f"{parsed.conversation_text}\n\n**Final Answer**\n{synthesized}"
-            ).strip()
+            if _looks_like_delegation_only(parsed.conversation_text):
+                synthesized = _summarize_delegation_results(delegation_results, user_message)
+                parsed.conversation_text = synthesized or parsed.conversation_text
+            else:
+                parsed.conversation_text += feedback_msg
         if research_mode and _looks_like_internal_agent_dump(parsed.conversation_text):
             _emit_progress(progress_callback, "Rewriting research answer")
             repaired = await self._repair_research_answer(
@@ -1554,9 +1552,7 @@ class Orchestrator:
 
         if delegation_results and _looks_like_delegation_only(parsed.conversation_text):
             synthesized = _summarize_delegation_results(delegation_results, user_message)
-            parsed.conversation_text = (
-                f"{parsed.conversation_text}\n\n**Final Answer**\n{synthesized}"
-            ).strip()
+            parsed.conversation_text = synthesized or parsed.conversation_text
         if research_mode and _looks_like_internal_agent_dump(parsed.conversation_text):
             _emit_progress(progress_callback, "Rewriting research answer")
             repaired = await self._repair_research_answer(
