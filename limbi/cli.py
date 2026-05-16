@@ -191,6 +191,8 @@ _OLLAMA_CLOUD_MODELS = [
     "minimax-m2.1:cloud",
 ]
 
+_MISSING = object()
+
 
 def _get_console():
     from rich.console import Console
@@ -204,7 +206,7 @@ def _print_banner(console):
 
     banner = Text()
     banner.append("Limbi", style="bold orange1")
-    banner.append(" v1.5.8", style="bold white")
+    banner.append(" v1.6.0", style="bold white")
     banner.append(" - Omni-Agent Orchestrator\n")
     banner.append("Type your prompt, or ", style="white")
     banner.append("/models", style="bold orange1")
@@ -216,11 +218,11 @@ def _print_banner(console):
     banner.append("/agents", style="bold orange1")
     banner.append(", ", style="white")
     banner.append("/keys", style="bold orange1")
-    banner.append(" for menus. ", style="white")
+    banner.append(", ", style="white")
     banner.append("/help", style="bold orange1")
-    banner.append(" shows the full list. ", style="white")
+    banner.append(" or ", style="white")
     banner.append("/quit", style="bold orange1")
-    banner.append(" exits.\n", style="white")
+    banner.append(".\n", style="white")
     banner.append("Use Up/Down and Enter in selection screens.", style="white")
 
     console.print(Panel(banner, border_style="orange1", padding=(0, 2)))
@@ -1030,6 +1032,213 @@ def _run_custom_skill(state: dict[str, Any], console, skill_name: str, task_text
         _refresh_orchestrator(state)
 
 
+def _run_evaluation_suite(state: dict[str, Any], console) -> None:
+    from rich.panel import Panel
+    from rich.table import Table
+
+    from limbi.evaluation import run_evaluation_suite
+
+    console.print("[bold orange1]Running evaluation suite...[/]")
+    result = asyncio.run(run_evaluation_suite())
+    benchmark = result.get("benchmark", {})
+    cases = result.get("cases", [])
+
+    table = Table(title="Evaluation Results", border_style="orange1", show_lines=False)
+    table.add_column("Case", style="bold white")
+    table.add_column("Status", style="white")
+    table.add_column("Score", justify="right", style="white")
+    table.add_column("Notes", style="dim")
+    for case in cases:
+        table.add_row(
+            str(case.get("name", "")),
+            str(case.get("status", "")),
+            f"{float(case.get('score', 0.0)):.2f}",
+            str(case.get("note", "")),
+        )
+
+    console.print(table)
+    console.print(
+        Panel(
+            f"Score: {float(benchmark.get('score', 0.0)):.3f}   "
+            f"Passed: {benchmark.get('passed', 0)}   "
+            f"Skipped: {benchmark.get('skipped', 0)}   "
+            f"Failed: {benchmark.get('failed', 0)}",
+            title="[bold orange1]Benchmark[/]",
+            border_style="orange1",
+            padding=(0, 1),
+        )
+    )
+
+
+def _print_permission_policy(console, state: dict[str, Any]) -> None:
+    from rich.table import Table
+    from limbi.workspace import get_permission_policy
+
+    policy = get_permission_policy(state.get("ws_config", {}))
+    table = Table(title="Permission Policy", border_style="orange1")
+    table.add_column("Scope", style="bold white")
+    table.add_column("Actor", style="white")
+    table.add_column("Mode", style="white")
+    for scope, entries in policy.items():
+        if not isinstance(entries, dict):
+            continue
+        for actor, mode in entries.items():
+            table.add_row(scope, actor, str(mode))
+    console.print(table)
+    console.print()
+
+
+def _print_recent_traces(console, limit: int = 10) -> None:
+    from rich.table import Table
+    from limbi.tracing import list_traces
+
+    traces = list_traces(limit=limit)
+    table = Table(title="Recent Traces", border_style="orange1", show_lines=False)
+    table.add_column("Trace ID", style="bold white")
+    table.add_column("Route", style="white")
+    table.add_column("Status", style="white")
+    table.add_column("Model", style="dim")
+    table.add_column("Tokens", style="dim", justify="right")
+    table.add_column("Search", style="dim")
+
+    if not traces:
+        table.add_row("(none)", "-", "-", "-", "0", "-")
+        console.print(table)
+        return
+
+    for trace in traces:
+        table.add_row(
+            str(trace.get("trace_id") or "")[:12],
+            str(trace.get("route") or "-"),
+            str(trace.get("status") or "-"),
+            str(trace.get("model") or "-"),
+            str(int(trace.get("total_tokens") or 0)),
+            str(trace.get("search_path") or "-"),
+        )
+    console.print(table)
+    console.print()
+
+
+def _print_trace_detail(console, trace_id: str) -> None:
+    from rich.panel import Panel
+    from rich.table import Table
+    from limbi.tracing import get_trace
+
+    trace = get_trace(trace_id)
+    if not trace:
+        console.print(f"[yellow]No trace found for '{trace_id}'.[/]")
+        return
+
+    header = Table.grid(padding=(0, 1))
+    header.add_row("Trace ID", str(trace.get("trace_id") or trace_id))
+    header.add_row("Status", str(trace.get("status") or ""))
+    header.add_row("Route", str(trace.get("route") or ""))
+    header.add_row("Route reason", str(trace.get("route_reason") or ""))
+    header.add_row("Route confidence", f"{float(trace.get('route_confidence') or 0.0):.2f}")
+    header.add_row("Model", str(trace.get("model") or ""))
+    header.add_row("Search path", str(trace.get("search_path") or ""))
+    header.add_row("Tokens", str(int(trace.get("total_tokens") or 0)))
+    header.add_row("Sources", str(int(trace.get("research_source_count") or 0)))
+    header.add_row("Prompt", str(trace.get("prompt") or ""))
+
+    console.print(Panel(header, title="[bold orange1]Trace[/]", border_style="orange1", padding=(1, 2)))
+
+    events = trace.get("events") or []
+    if events:
+        table = Table(title="Trace Events", border_style="orange1", show_lines=False)
+        table.add_column("Time", style="dim")
+        table.add_column("Kind", style="bold white")
+        table.add_column("Status", style="white")
+        table.add_column("Agent", style="white")
+        table.add_column("Action", style="white")
+        table.add_column("Message", style="white")
+        for event in events:
+            table.add_row(
+                str(event.get("timestamp") or ""),
+                str(event.get("kind") or ""),
+                str(event.get("status") or ""),
+                str(event.get("agent") or ""),
+                str(event.get("action") or ""),
+                str(event.get("message") or ""),
+            )
+        console.print(table)
+    console.print()
+
+
+def _export_custom_skill(state: dict[str, Any], console, skill_name: str, output_path: str | None = None) -> None:
+    from limbi.workspace import export_custom_skill
+
+    skill_key = _normalize_custom_skill_name(skill_name)
+    skill = export_custom_skill(state["ws_config"], skill_key)
+    if not skill:
+        console.print(f"[yellow]No saved custom skill named '{skill_key}'.[/]")
+        return
+
+    payload = json.dumps(skill, indent=2) + "\n"
+    if output_path:
+        Path(output_path).expanduser().write_text(payload, encoding="utf-8")
+        console.print(f"[green]Exported custom skill:[/] [bold]{skill_key}[/] -> {output_path}")
+    else:
+        console.print(payload)
+
+
+def _import_custom_skill(state: dict[str, Any], console, input_path: str) -> None:
+    from limbi.workspace import import_custom_skill, save_config
+
+    path = Path(input_path).expanduser()
+    if not path.exists():
+        console.print(f"[red]Skill file not found:[/] {path}")
+        return
+
+    try:
+        payload = json.loads(path.read_text(encoding="utf-8"))
+    except json.JSONDecodeError as exc:
+        console.print(f"[red]Invalid skill JSON:[/] {exc}")
+        return
+
+    state["ws_config"] = import_custom_skill(state["ws_config"], payload)
+    save_config(state["ws_config"])
+    skill_name = _normalize_custom_skill_name(str(payload.get("name") or payload.get("skill_name") or "skill"))
+    console.print(f"[green]Imported custom skill:[/] [bold]{skill_name}[/]")
+
+
+def _export_custom_skill_pack(state: dict[str, Any], console, skill_name: str, output_path: str | None = None) -> None:
+    from limbi.workspace import export_custom_skill_pack
+
+    skill_key = _normalize_custom_skill_name(skill_name)
+    pack = export_custom_skill_pack(state["ws_config"], skill_key)
+    if not pack:
+        console.print(f"[yellow]No saved custom skill named '{skill_key}'.[/]")
+        return
+
+    payload = json.dumps(pack, indent=2) + "\n"
+    if output_path:
+        Path(output_path).expanduser().write_text(payload, encoding="utf-8")
+        console.print(f"[green]Exported custom skill pack:[/] [bold]{skill_key}[/] -> {output_path}")
+    else:
+        console.print(payload)
+
+
+def _import_custom_skill_pack(state: dict[str, Any], console, input_path: str) -> None:
+    from limbi.workspace import import_custom_skill_pack, save_config
+
+    path = Path(input_path).expanduser()
+    if not path.exists():
+        console.print(f"[red]Skill pack file not found:[/] {path}")
+        return
+
+    try:
+        payload = json.loads(path.read_text(encoding="utf-8"))
+    except json.JSONDecodeError as exc:
+        console.print(f"[red]Invalid skill pack JSON:[/] {exc}")
+        return
+
+    state["ws_config"] = import_custom_skill_pack(state["ws_config"], payload)
+    save_config(state["ws_config"])
+    skill_name = _normalize_custom_skill_name(str((payload.get("manifest") or {}).get("name") or (payload.get("skill") or {}).get("name") or "skill"))
+    console.print(f"[green]Imported custom skill pack:[/] [bold]{skill_name}[/]")
+
+
 def _parse_json_params(raw: str) -> dict[str, Any]:
     text = raw.strip()
     if not text:
@@ -1041,6 +1250,66 @@ def _parse_json_params(raw: str) -> dict[str, Any]:
     if not isinstance(payload, dict):
         raise click.ClickException("Parameters must be a JSON object.")
     return payload
+
+
+def _prompt_missing_contract_params(agent, action: str, params: dict[str, Any], console) -> dict[str, Any]:
+    contract = getattr(agent, "action_contract", lambda _action: None)(action)
+    if not contract:
+        return params
+
+    schema = contract.input_schema or {}
+    properties = schema.get("properties", {})
+    required = list(schema.get("required", []))
+
+    for field_name in required:
+        if field_name in params:
+            continue
+        field_schema = properties.get(field_name, {})
+        field_type = str(field_schema.get("type") or "string")
+        default_value = field_schema.get("default", _MISSING)
+        prompt_text = f"Enter value for {field_name}"
+
+        if field_type == "integer":
+            params[field_name] = click.prompt(
+                prompt_text,
+                default=default_value if default_value is not _MISSING else None,
+                type=int,
+                show_default=default_value is not _MISSING,
+            )
+        elif field_type == "number":
+            params[field_name] = click.prompt(
+                prompt_text,
+                default=default_value if default_value is not _MISSING else None,
+                type=float,
+                show_default=default_value is not _MISSING,
+            )
+        elif field_type == "boolean":
+            params[field_name] = click.confirm(
+                f"{field_name}?",
+                default=bool(default_value) if default_value is not _MISSING else False,
+            )
+        elif field_type in {"array", "object"}:
+            raw = click.prompt(
+                f"Enter JSON for {field_name}",
+                default="[]" if field_type == "array" else "{}",
+                show_default=True,
+                type=str,
+            )
+            try:
+                params[field_name] = _parse_json_params(raw) if field_type == "object" else json.loads(raw)
+            except json.JSONDecodeError as exc:
+                raise click.ClickException(f"Invalid JSON for '{field_name}': {exc}") from exc
+            if field_type == "array" and not isinstance(params[field_name], list):
+                raise click.ClickException(f"Parameter '{field_name}' must be a JSON array.")
+        else:
+            params[field_name] = click.prompt(
+                prompt_text,
+                default=str(default_value) if default_value is not _MISSING else "",
+                show_default=default_value is not _MISSING,
+                type=str,
+            )
+
+    return params
 
 
 def _run_manual_agent(state: dict[str, Any], console) -> None:
@@ -1104,6 +1373,7 @@ def _run_manual_agent(state: dict[str, Any], console) -> None:
                 or "general"
             ),
         )
+    params = _prompt_missing_contract_params(agent, action, params, console)
     result = agent.execute(action, params)
 
     console.print(
@@ -1281,6 +1551,37 @@ async def _send_message(state, message: str, console) -> None:
         summary.append("    ", style="white")
         summary.append("budget: ", style="bold orange1")
         summary.append(str(metrics.get("runtime_token_budget", 0)), style="white")
+        summary.append("    ", style="white")
+        summary.append("route: ", style="bold orange1")
+        summary.append(str(metrics.get("task_route", "direct")), style="white")
+        route_confidence = metrics.get("route_confidence")
+        if route_confidence is not None:
+            summary.append(" ", style="white")
+            summary.append(f"({float(route_confidence) * 100:.0f}% confidence)", style="dim")
+        route_reason = str(metrics.get("route_reason", "")).strip()
+        if route_reason:
+            summary.append(" ", style="white")
+            summary.append(f"[{route_reason}]", style="dim")
+        effective_model = str(metrics.get("effective_model", "")).strip()
+        if effective_model:
+            summary.append("    ", style="white")
+            summary.append("model: ", style="bold orange1")
+            summary.append(effective_model, style="white")
+        trace_id = str(metrics.get("trace_id", "")).strip()
+        if trace_id:
+            summary.append("    ", style="white")
+            summary.append("trace: ", style="bold orange1")
+            summary.append(trace_id, style="white")
+        search_path = str(metrics.get("search_path", "")).strip()
+        if search_path:
+            summary.append("    ", style="white")
+            summary.append("search: ", style="bold orange1")
+            summary.append(search_path, style="white")
+        source_count = int(metrics.get("research_source_count", 0) or 0)
+        if source_count:
+            summary.append("    ", style="white")
+            summary.append("sources: ", style="bold orange1")
+            summary.append(str(source_count), style="white")
         console.print(Panel(summary, border_style="orange1", padding=(0, 1)))
 
 
@@ -1312,6 +1613,32 @@ def _repl(state, console):
                 subcommand = parts[1].lower() if len(parts) > 1 else ""
                 if subcommand in {"list", "show"}:
                     _print_custom_skills(console, state)
+                elif subcommand == "export":
+                    if len(parts) < 3:
+                        console.print("[yellow]Use /skills export <name> [output.json][/]")
+                    else:
+                        output_path = parts[3] if len(parts) > 3 else None
+                        _export_custom_skill(state, console, parts[2], output_path=output_path)
+                elif subcommand == "import":
+                    if len(parts) < 3:
+                        console.print("[yellow]Use /skills import <skill.json>[/]")
+                    else:
+                        _import_custom_skill(state, console, parts[2])
+                elif subcommand == "pack" and len(parts) > 2:
+                    pack_action = parts[2].lower()
+                    if pack_action == "export":
+                        if len(parts) < 4:
+                            console.print("[yellow]Use /skills pack export <name> [output.json][/]")
+                        else:
+                            output_path = parts[4] if len(parts) > 4 else None
+                            _export_custom_skill_pack(state, console, parts[3], output_path=output_path)
+                    elif pack_action == "import":
+                        if len(parts) < 4:
+                            console.print("[yellow]Use /skills pack import <skill-pack.json>[/]")
+                        else:
+                            _import_custom_skill_pack(state, console, parts[3])
+                    else:
+                        console.print("[yellow]Use /skills pack export ... or /skills pack import ...[/]")
                 elif subcommand in {"update", "edit"} and len(parts) > 2:
                     from limbi.workspace import get_custom_skill
 
@@ -1349,6 +1676,35 @@ def _repl(state, console):
             if cmd in ("/keys", "/key"):
                 _manage_provider_keys(state, console)
                 continue
+            if cmd in ("/eval", "/benchmark"):
+                _run_evaluation_suite(state, console)
+                continue
+            if cmd in ("/permissions",):
+                subcommand = parts[1].lower() if len(parts) > 1 else "show"
+                if subcommand in {"show", "list"}:
+                    _print_permission_policy(console, state)
+                elif len(parts) >= 4:
+                    from limbi.workspace import save_config, set_permission_policy
+
+                    scope = parts[1]
+                    actor = parts[2]
+                    mode = parts[3]
+                    state["ws_config"] = set_permission_policy(state["ws_config"], scope, actor, mode)
+                    save_config(state["ws_config"])
+                    console.print(f"[green]Permission updated:[/] {scope}:{actor} -> {mode}\n")
+                else:
+                    console.print("[yellow]Use /permissions show or /permissions <scope> <actor> <mode>[/]")
+                continue
+            if cmd in ("/traces",):
+                _print_recent_traces(console)
+                continue
+            if cmd in ("/trace",):
+                if len(parts) > 1:
+                    _print_trace_detail(console, parts[1])
+                else:
+                    _print_recent_traces(console, limit=5)
+                    console.print("[dim]Use /trace <trace_id> for the full event log.[/]")
+                continue
             if cmd in ("/providers",):
                 _print_providers(console)
                 continue
@@ -1378,16 +1734,12 @@ def _repl(state, console):
                         """## Commands
 | Command | Description |
 |---------|-------------|
+| `/models` | Choose provider and model for the current session |
+| `/keys` | Manage saved API keys for providers |
 | `/skills` | Open the custom skill manager |
 | `/skill` | Run a saved custom skill with a task |
 | `/agents` | Manually choose an agent and run one action |
 | `/agent` | Alias for `/agents` |
-| `/model` | Alias for `/models` |
-| `/key` | Alias for `/keys` |
-| `/providers` | Show supported LLM providers |
-| `/models` | Choose provider, model, and save or reuse the API key |
-| `/keys` | Manage saved API keys for providers |
-| `/list` | List all registered agents |
 | `/trust` | Show workspace trust status |
 | `/clear` | Clear conversation history |
 | `/help` | Show this help |
@@ -1474,7 +1826,7 @@ Type a natural-language prompt to talk to Limbi.
     default=False,
     help="Skip workspace trust prompt (for CI/automation).",
 )
-@click.version_option(version="1.5.8", prog_name="limbi")
+@click.version_option(version="1.6.0", prog_name="limbi")
 def main(
     prompt: str | None,
     provider: str | None,

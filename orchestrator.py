@@ -27,14 +27,17 @@ from agents.context_memory_agent import (
     set_shared_state_value,
 )
 from limbi.runtime_metrics import build_runtime_metrics
+from limbi.permissions import evaluate_permission
+from limbi.tracing import start_trace, record_trace_event, finish_trace
+from limbi.workspace import load_config
 
 logger = logging.getLogger("limbi.orchestrator")
 
 MAX_RETRIES = 3
 RETRY_BACKOFF_BASE = 0.5
 
-MAX_HISTORY_MESSAGES = 40
-SUMMARIZE_THRESHOLD = 30
+MAX_HISTORY_MESSAGES = 24
+SUMMARIZE_THRESHOLD = 16
 
 SYSTEM_PROMPT = """\
 You are **Limbi**, an elite full-stack AI assistant with access to a swarm \
@@ -115,6 +118,9 @@ When you decide an action needs to be executed in the real world, include a \
 - If URL research context is present, use it as the primary evidence source.
 - If internet research context is present, use it as the primary evidence source.
 - Prefer facts, headings, and quoted page content over generic memory.
+- Cite source-backed claims inline with the source labels shown in the research context
+  such as `[U1]` or `[W1]`.
+- If sources disagree or evidence is incomplete, say so plainly instead of guessing.
 - If a URL cannot be fetched or rendered, say so plainly and do not invent details.
 - If the user asks for research, answer the topic directly from the research context and do not dump the agent registry unless the user asked about agents.
 """
@@ -181,6 +187,25 @@ def _build_recent_executions_text() -> str:
             f"{(' - ' + r['error']) if r.get('error') else ''}"
         )
     return "\n".join(lines)
+
+
+def _compact_summary(existing: str, latest: str, *, limit: int = 1200) -> str:
+    bullets: list[str] = []
+    seen: set[str] = set()
+    for block in (existing, latest):
+        for raw_line in (block or "").splitlines():
+            line = raw_line.strip().lstrip("-•*").strip()
+            if not line:
+                continue
+            normalized = re.sub(r"\s+", " ", line).lower()
+            if normalized in seen:
+                continue
+            seen.add(normalized)
+            bullets.append(f"- {line}")
+    summary = "\n".join(bullets)
+    if len(summary) > limit:
+        summary = summary[: limit - 3].rstrip() + "..."
+    return summary
 
 
 def _looks_like_web_research_prompt(user_message: str) -> bool:
@@ -263,6 +288,24 @@ def _extract_urls(text: str) -> list[str]:
         seen.add(cleaned)
         urls.append(cleaned)
     return urls
+
+
+def _dedupe_history_messages(messages: list[HumanMessage | AIMessage], limit: int = 8) -> list[HumanMessage | AIMessage]:
+    if limit <= 0 or not messages:
+        return []
+    recent = messages[-limit:]
+    deduped: list[HumanMessage | AIMessage] = []
+    seen: set[str] = set()
+    for message in recent:
+        content = str(getattr(message, "content", "") or "").strip()
+        if not content:
+            continue
+        normalized = re.sub(r"\s+", " ", content).lower()
+        if normalized in seen:
+            continue
+        seen.add(normalized)
+        deduped.append(message)
+    return deduped
 
 
 def _looks_like_delegation_only(text: str) -> bool:
@@ -417,6 +460,63 @@ def _suggest_runtime_limits(level: str, base_max_tokens: int, base_temperature: 
         "temperature": round(temperature, 2),
     }
 
+
+def _suggest_model_for_task(provider_name: str, task_route: str, task_level: str, current_model: str) -> str:
+    provider_name = (provider_name or "").strip().lower()
+    current_model = (current_model or "").strip()
+    if provider_name not in {"ollama", "lmstudio", "vllm", "localai", "koboldcpp", "llamacpp", "ollama_cloud"}:
+        return current_model
+    if provider_name == "ollama_cloud":
+        if task_route == "research" or task_level == "complex":
+            return "deepseek-v3.1:671b-cloud"
+        if task_route == "delegate":
+            return "qwen3-coder:480b-cloud"
+        return "gpt-oss:20b-cloud"
+    if task_level == "simple":
+        return "gemma2:2b"
+    if task_route == "research":
+        return "qwen2.5:3b"
+    if task_route == "delegate":
+        return "llama3.2:3b"
+    return current_model or "llama3.2:3b"
+
+
+def _decide_task_route(
+    user_message: str,
+    *,
+    url_research_context: str = "",
+    web_research_context: str = "",
+    rag_context: str = "",
+) -> dict[str, Any]:
+    text = user_message.lower()
+    route = "direct"
+    reason = "general conversation"
+    confidence = 0.55
+
+    if _looks_like_web_research_prompt(user_message):
+        confidence = 0.78
+    if url_research_context or web_research_context:
+        confidence = max(confidence, 0.9)
+
+    if _needs_clarification(user_message) and not _looks_like_web_research_prompt(user_message):
+        route = "clarify"
+        reason = "request is ambiguous"
+        confidence = 0.35
+    elif _looks_like_web_research_prompt(user_message) or url_research_context or web_research_context:
+        route = "research"
+        reason = "research intent or research context detected"
+        confidence = max(confidence, 0.88)
+    elif any(token in text for token in ("build", "create", "implement", "refactor", "debug", "fix", "write", "save", "generate code")):
+        route = "delegate"
+        reason = "action-oriented build/edit task"
+        confidence = 0.76
+    elif rag_context:
+        route = "retrieve"
+        reason = "workspace context is relevant"
+        confidence = 0.72
+
+    return {"route": route, "reason": reason, "confidence": round(min(confidence, 0.98), 2)}
+
 class Orchestrator:
 
     def __init__(
@@ -433,6 +533,12 @@ class Orchestrator:
         self._history: list[HumanMessage | AIMessage] = []
 
         self._conversation_summary: str = ""
+        self._current_goal: str = ""
+        self._current_route: str = "direct"
+        self._route_reason: str = ""
+        self._route_confidence: float = 0.0
+        self._recommended_model: str = ""
+        self._search_path: str = ""
 
         self._vector_store = VectorStore()
 
@@ -459,10 +565,14 @@ class Orchestrator:
         *,
         max_tokens: int | None = None,
         temperature: float | None = None,
+        model_name: str | None = None,
     ) -> BaseChatModel:
+        effective_model = (model_name or self._provider.config.model or "").strip()
+        if not effective_model:
+            effective_model = self._model_name
         runtime_config = ProviderConfig(
             provider=self._provider.config.provider,
-            model=self._provider.config.model,
+            model=effective_model,
             base_url=self._provider.config.base_url,
             api_key=self._provider.config.api_key,
             temperature=self._provider.config.temperature if temperature is None else temperature,
@@ -491,6 +601,15 @@ class Orchestrator:
             set_shared_state_value(self._session_id, "provider", self._provider.provider_name())
             set_shared_state_value(self._session_id, "model", self._provider.config.model)
             set_shared_state_value(self._session_id, "base_url", self._provider.config.base_url)
+            set_shared_state_value(self._session_id, "workspace_path", str(Path.cwd().resolve()))
+            set_shared_state_value(self._session_id, "active_project_root", str(Path.cwd().resolve()))
+            set_shared_state_value(self._session_id, "current_goal", self._current_goal)
+            set_shared_state_value(self._session_id, "current_focus", self._current_goal)
+            set_shared_state_value(self._session_id, "current_route", self._current_route)
+            set_shared_state_value(self._session_id, "route_reason", getattr(self, "_route_reason", ""))
+            set_shared_state_value(self._session_id, "route_confidence", getattr(self, "_route_confidence", 0.0))
+            set_shared_state_value(self._session_id, "recommended_model", self._recommended_model)
+            set_shared_state_value(self._session_id, "search_path", self._search_path)
             if self._conversation_summary:
                 set_shared_state_value(self._session_id, "conversation_summary", self._conversation_summary)
         except Exception as exc:
@@ -537,6 +656,11 @@ class Orchestrator:
             return ""
 
         _emit_progress(progress_callback, "Searching sources")
+        record_trace_event(
+            kind="research.url",
+            message="building URL research context",
+            payload={"url_count": len(urls)},
+        )
 
         try:
             web_agent = get_agent("web_scraping_agent")
@@ -589,25 +713,32 @@ class Orchestrator:
         comparison_sources: list[dict[str, str]] = []
 
         for index, item in enumerate(source_summaries, start=1):
+            citation = f"[U{index}]"
             headings = item.get("section_headings") or []
             summary = item.get("summary") or ""
+            excerpt = str(item.get("summary") or item.get("excerpt") or "").strip()
+            quoted_evidence = str(item.get("quoted_evidence") or excerpt).strip()
             source_blocks.append(
                 "\n".join(
                     [
-                        f"### Source {index}",
+                        f"### Source {index} {citation}",
                         f"- URL: {item['url']}",
                         f"- Title: {item.get('title') or '(unknown)'}",
                         f"- Status: {'fetched' if item.get('success') else 'unavailable'}",
+                        f"- Citation: {citation}",
                         f"- Key headings: {', '.join(headings[:5]) if headings else '(none)'}",
                         f"- Summary: {summary[:1200] if summary else '(no summary available)'}",
+                        f"- Evidence excerpt: {excerpt[:300] if excerpt else '(none)'}",
+                        f"- Quoted evidence: {quoted_evidence[:300] if quoted_evidence else '(none)'}",
                     ]
                 )
             )
             if summary:
                 comparison_sources.append(
                     {
-                        "title": item.get("title") or f"Source {index}",
+                        "title": f"{item.get('title') or f'Source {index}'} {citation}",
                         "content": f"URL: {item['url']}\n{summary}",
+                        "citation": citation,
                     }
                 )
 
@@ -625,19 +756,29 @@ class Orchestrator:
                         f"- Consensus: {compare_data.get('consensus', 'unknown')}",
                         f"- Agreement ratio: {compare_data.get('agreement_ratio', 0)}",
                         f"- Common themes: {', '.join(compare_data.get('common_themes', [])[:8]) or '(none)'}",
+                        f"- Disagreements: {', '.join(compare_data.get('disagreements', [])[:4]) or '(none)'}",
                     ]
                 )
             )
+            if str(compare_data.get("consensus", "")).lower() == "weak":
+                source_blocks.append("### Confidence Note\n- The sources disagree enough that a cautious answer should say 'I don't know' or note uncertainty.")
         elif len(comparison_sources) >= 2:
             source_blocks.append(
                 "### Source Comparison\n- Consensus: unavailable\n- Agreement ratio: unavailable\n- Common themes: unavailable"
             )
 
+        record_trace_event(
+            kind="research.url",
+            message="URL research context built",
+            payload={"url_count": len(source_summaries), "comparison_count": len(comparison_sources)},
+        )
+
         source_blocks.append(
             "## How To Use These Sources\n"
             "- Treat the fetched material as the primary evidence.\n"
             "- If the answer depends on details not visible in the fetched pages, say so.\n"
-            "- Prefer source-based summaries over generic model memory."
+            "- Prefer source-based summaries over generic model memory.\n"
+            "- Cite important claims with the reference labels like [U1], [U2]."
         )
         return "\n\n".join(source_blocks)
 
@@ -659,6 +800,11 @@ class Orchestrator:
             return ""
 
         _emit_progress(progress_callback, "Searching internet")
+        record_trace_event(
+            kind="research.web",
+            message="building web research context",
+            payload={"search_path": search_path, "query": query},
+        )
         try:
             result = await asyncio.to_thread(
                 research_agent.execute,
@@ -690,17 +836,21 @@ class Orchestrator:
             "",
             "### Top Results",
         ]
-        for item in results[:4]:
+        for index, item in enumerate(results[:4], start=1):
             if not isinstance(item, dict):
                 continue
             title = str(item.get("title") or "").strip()
             url = str(item.get("url") or "").strip()
             snippet = str(item.get("snippet") or "").strip()
+            citation = str(item.get("citation") or "").strip() or f"[W{index}]"
+            quoted_evidence = str(item.get("quoted_evidence") or snippet).strip()
             if not title and not url and not snippet:
                 continue
-            line = f"- {title}" if title else "- Result"
+            line = f"- {citation} {title}" if title else f"- {citation} Result"
             if snippet:
                 line += f": {snippet}"
+            if quoted_evidence:
+                line += f" | evidence: {quoted_evidence[:180]}"
             if url:
                 line += f" ({url})"
             blocks.append(line)
@@ -748,6 +898,9 @@ class Orchestrator:
                     {
                         "url": url,
                         "summary": summary_text,
+                        "excerpt": page_text[:300].strip(),
+                        "quoted_evidence": str(data.get("quoted_evidence") or page_text[:220]).strip(),
+                        "citation": str(data.get("citation") or f"[W{len(fetched_pages) + 1}]"),
                     }
                 )
 
@@ -755,14 +908,29 @@ class Orchestrator:
                 blocks.append("")
                 blocks.append("### Fetched Pages")
                 for page in fetched_pages:
-                    blocks.append(f"- {page['url']}")
+                    blocks.append(f"- {page['citation']} {page['url']}")
                     if page.get("summary"):
                         blocks.append(f"  - Summary: {page['summary']}")
+                    if page.get("excerpt"):
+                        blocks.append(f"  - Evidence excerpt: {page['excerpt']}")
+                if page.get("quoted_evidence"):
+                    blocks.append(f"  - Quoted evidence: {page['quoted_evidence']}")
+        record_trace_event(
+            kind="research.web",
+            message="web research context built",
+            payload={
+                "search_path": data.get("search_path", "unknown"),
+                "result_count": len(results),
+                "fetched_pages": len(fetched_pages) if top_urls else 0,
+            },
+        )
 
         blocks.append("")
         blocks.append("### Guidance")
         blocks.append("- Use the search results and fetched pages above as the evidence base.")
         blocks.append("- Answer the topic directly and do not repeat Limbi's internal agent list.")
+        blocks.append("- Cite claims using the source labels like [W1] or [U1] where possible.")
+        blocks.append("- If the evidence conflicts, say so instead of forcing a confident answer.")
         return "\n".join(blocks).strip()
 
     async def _repair_research_answer(
@@ -792,7 +960,8 @@ class Orchestrator:
                     content=(
                         "You rewrite research answers. Use only the supplied research context. "
                         "Do not mention Limbi internals, the agent registry, shared memory, or "
-                        "tool logs. Answer the user's topic directly and concisely."
+                        "tool logs. Answer the user's topic directly and concisely. "
+                        "Keep or add source citations like [U1] and [W1] when making claims."
                     )
                 ),
                 HumanMessage(
@@ -818,10 +987,29 @@ class Orchestrator:
         progress_callback: Callable[[str], None] | None = None,
     ) -> dict[str, Any]:
 
+        trace_id = start_trace(
+            session_id=self._session_id,
+            prompt=user_message,
+            provider=self._provider.provider_name(),
+            model=self._provider.config.model,
+        )
+        record_trace_event(
+            kind="prompt.ingest",
+            message="prompt received",
+            payload={
+                "session_id": self._session_id,
+                "provider": self._provider.provider_name(),
+                "model": self._provider.config.model,
+                "prompt_length": len(user_message),
+            },
+        )
+
         clarification_questions = _needs_clarification(user_message)
         if clarification_questions:
+            final_text = "\n".join(f"- {q}" for q in clarification_questions)
+            finish_trace(status="clarification", final_answer=final_text)
             return {
-                "conversation_text": "\n".join(f"- {q}" for q in clarification_questions),
+                "conversation_text": final_text,
                 "delegations_executed": [],
                 "errors": [],
                 "metrics": {
@@ -830,6 +1018,10 @@ class Orchestrator:
                     "prompt_tokens": 0,
                     "completion_tokens": 0,
                     "total_tokens": 0,
+                    "task_route": "clarify",
+                    "route_confidence": 0.35,
+                    "route_reason": "request is ambiguous",
+                    "trace_id": trace_id,
                     "estimated_hallucination_risk_percent": 5,
                     "estimated_confidence_percent": 95,
                 },
@@ -837,11 +1029,13 @@ class Orchestrator:
             }
 
         if provider_requires_api_key(self._provider.provider_name()) and not self._provider.config.api_key:
+            blocked_text = (
+                f"Selected provider `{self._provider.provider_name()}` requires `LLM_API_KEY`.\n\n"
+                "Set the key or switch to `ollama` for a local no-key setup."
+            )
+            finish_trace(status="blocked", final_answer=blocked_text)
             return {
-                "conversation_text": (
-                    f"Selected provider `{self._provider.provider_name()}` requires `LLM_API_KEY`.\n\n"
-                    "Set the key or switch to `ollama` for a local no-key setup."
-                ),
+                "conversation_text": blocked_text,
                 "delegations_executed": [],
                 "errors": ["Missing API key for selected provider"],
                 "metrics": {
@@ -850,6 +1044,10 @@ class Orchestrator:
                     "prompt_tokens": 0,
                     "completion_tokens": 0,
                     "total_tokens": 0,
+                    "task_route": "blocked",
+                    "route_confidence": 0.0,
+                    "route_reason": "provider requires an API key",
+                    "trace_id": trace_id,
                     "estimated_hallucination_risk_percent": 8,
                     "estimated_confidence_percent": 92,
                 },
@@ -867,12 +1065,32 @@ class Orchestrator:
             },
         )
 
-        research_mode = _looks_like_web_research_prompt(user_message)
+        task_route_info = _decide_task_route(user_message)
+        task_route = task_route_info["route"]
+        route_confidence = float(task_route_info.get("confidence", 0.0) or 0.0)
+        _emit_progress(progress_callback, f"Routing: {task_route}")
+        record_trace_event(
+            kind="routing.decision",
+            message=f"route={task_route}",
+            payload={
+                "route": task_route,
+                "reason": task_route_info.get("reason", ""),
+                "confidence": route_confidence,
+            },
+        )
+
+        research_mode = task_route == "research" or _looks_like_web_research_prompt(user_message)
+        search_path = _choose_web_search_path(user_message) if research_mode else ""
         rag_context = self._vector_store.get_context_string(user_message)
         if research_mode:
             rag_context = ""
         if rag_context:
             _emit_progress(progress_callback, "Gathering workspace context")
+            record_trace_event(
+                kind="context.workspace",
+                message="workspace context loaded",
+                payload={"chars": len(rag_context)},
+            )
         url_research_context = await self._build_url_research_context(
             user_message,
             progress_callback=progress_callback,
@@ -881,6 +1099,16 @@ class Orchestrator:
             user_message,
             progress_callback=progress_callback,
         )
+        if url_research_context or web_research_context:
+            record_trace_event(
+                kind="research.context",
+                message="research context prepared",
+                payload={
+                    "url_context_chars": len(url_research_context),
+                    "web_context_chars": len(web_research_context),
+                    "search_path": search_path,
+                },
+            )
         _emit_progress(progress_callback, "Calculating runtime budget")
         agent_registry = _build_agent_registry_text()
         recent_execs = "" if research_mode else _build_recent_executions_text()
@@ -896,6 +1124,31 @@ class Orchestrator:
             web_research_context=web_research_context,
             shared_context=shared_ctx,
         )
+        research_source_count = url_research_context.count("### Source ") + web_research_context.count("- [W")
+        suggested_model = _suggest_model_for_task(
+            self._provider.provider_name(),
+            task_route,
+            task_profile["level"],
+            self._provider.config.model,
+        )
+        runtime_model = suggested_model or self._provider.config.model
+        if suggested_model and suggested_model != self._provider.config.model:
+            _emit_progress(progress_callback, f"Routing model: {suggested_model}")
+        try:
+            self._current_goal = user_message[:1200]
+            self._current_route = task_route
+            self._route_reason = str(task_route_info.get("reason", ""))
+            self._route_confidence = route_confidence
+            self._recommended_model = runtime_model
+            self._search_path = search_path
+            set_shared_state_value(self._session_id, "current_route", task_route)
+            set_shared_state_value(self._session_id, "route_reason", task_route_info.get("reason", ""))
+            set_shared_state_value(self._session_id, "route_confidence", route_confidence)
+            set_shared_state_value(self._session_id, "recommended_model", runtime_model)
+            set_shared_state_value(self._session_id, "current_goal", self._current_goal)
+            set_shared_state_value(self._session_id, "search_path", self._search_path)
+        except Exception:
+            pass
         runtime_limits = _suggest_runtime_limits(
             task_profile["level"],
             self._provider.config.max_tokens,
@@ -904,6 +1157,7 @@ class Orchestrator:
         llm = self._ensure_llm(
             max_tokens=runtime_limits["max_tokens"],
             temperature=runtime_limits["temperature"],
+            model_name=runtime_model,
         )
         system_text = SYSTEM_PROMPT.format(
             agent_registry=agent_registry,
@@ -919,7 +1173,7 @@ class Orchestrator:
             messages.append(SystemMessage(
                 content=f"[CONVERSATION SUMMARY OF EARLIER MESSAGES]\n{self._conversation_summary}"
             ))
-        messages.extend(self._history)
+        messages.extend(_dedupe_history_messages(self._history, limit=8))
         messages.append(HumanMessage(content=user_message))
 
         started = time.perf_counter()
@@ -929,6 +1183,7 @@ class Orchestrator:
             raw_text: str = response.content
         except Exception as exc:
             logger.error("LLM call failed: %s", exc)
+            finish_trace(status="error", final_answer="LLM provider unavailable")
             return {
                 "conversation_text": (
                     f" I couldn't reach the local model (`{self._model_name}`).\n\n"
@@ -942,6 +1197,7 @@ class Orchestrator:
                     "prompt_tokens": 0,
                     "completion_tokens": 0,
                     "total_tokens": 0,
+                    "trace_id": trace_id,
                     "estimated_hallucination_risk_percent": 95,
                     "estimated_confidence_percent": 5,
                 },
@@ -964,6 +1220,11 @@ class Orchestrator:
             delegation_results = await self._execute_delegations_parallel(
                 parsed.delegation_payloads,
                 progress_callback=progress_callback,
+            )
+            record_trace_event(
+                kind="delegation.summary",
+                message="delegated work completed",
+                payload={"count": len(delegation_results)},
             )
 
             result_summary = "\n".join(
@@ -998,7 +1259,7 @@ class Orchestrator:
                 "task_level": task_profile["level"],
                 "task_score": task_profile["score"],
                 "provider": self._provider.provider_name(),
-                "model": self._provider.config.model,
+                "model": runtime_model,
                 "max_tokens": runtime_limits["max_tokens"],
             },
         )
@@ -1020,6 +1281,23 @@ class Orchestrator:
             task_complexity=task_profile["level"],
             token_budget=runtime_limits["max_tokens"],
             memory_turns=len(self._history),
+            task_route=task_route,
+            route_confidence=route_confidence,
+            route_reason=str(task_route_info.get("reason", "")),
+            search_path=search_path,
+            research_source_count=research_source_count,
+            recommended_model=runtime_model,
+            effective_model=runtime_model,
+            trace_id=trace_id,
+        )
+        finish_trace(
+            status="completed",
+            final_answer=parsed.conversation_text,
+            prompt_tokens=metrics.get("prompt_tokens", 0),
+            completion_tokens=metrics.get("completion_tokens", 0),
+            total_tokens=metrics.get("total_tokens", 0),
+            search_path=search_path,
+            research_source_count=research_source_count,
         )
 
         return {
@@ -1035,11 +1313,30 @@ class Orchestrator:
         progress_callback: Callable[[str], None] | None = None,
     ) -> AsyncIterator[dict[str, Any]]:
 
+        trace_id = start_trace(
+            session_id=self._session_id,
+            prompt=user_message,
+            provider=self._provider.provider_name(),
+            model=self._provider.config.model,
+        )
+        record_trace_event(
+            kind="prompt.ingest",
+            message="prompt received",
+            payload={
+                "session_id": self._session_id,
+                "provider": self._provider.provider_name(),
+                "model": self._provider.config.model,
+                "prompt_length": len(user_message),
+            },
+        )
+
         clarification_questions = _needs_clarification(user_message)
         if clarification_questions:
+            final_text = "\n".join(f"- {q}" for q in clarification_questions)
+            finish_trace(status="clarification", final_answer=final_text)
             yield {
                 "type": "done",
-                "conversation_text": "\n".join(f"- {q}" for q in clarification_questions),
+                "conversation_text": final_text,
                 "delegations": [],
                 "errors": [],
                 "metrics": {
@@ -1048,6 +1345,10 @@ class Orchestrator:
                     "prompt_tokens": 0,
                     "completion_tokens": 0,
                     "total_tokens": 0,
+                    "task_route": "clarify",
+                    "route_confidence": 0.35,
+                    "route_reason": "request is ambiguous",
+                    "trace_id": trace_id,
                     "estimated_hallucination_risk_percent": 5,
                     "estimated_confidence_percent": 95,
                 },
@@ -1056,11 +1357,13 @@ class Orchestrator:
             return
 
         if provider_requires_api_key(self._provider.provider_name()) and not self._provider.config.api_key:
+            blocked_text = (
+                f"Selected provider `{self._provider.provider_name()}` requires `LLM_API_KEY`."
+            )
+            finish_trace(status="blocked", final_answer=blocked_text)
             yield {
                 "type": "error",
-                "content": (
-                    f"Selected provider `{self._provider.provider_name()}` requires `LLM_API_KEY`."
-                ),
+                "content": blocked_text,
             }
             yield {
                 "type": "done",
@@ -1073,6 +1376,10 @@ class Orchestrator:
                     "prompt_tokens": 0,
                     "completion_tokens": 0,
                     "total_tokens": 0,
+                    "task_route": "blocked",
+                    "route_confidence": 0.0,
+                    "route_reason": "provider requires an API key",
+                    "trace_id": trace_id,
                     "estimated_hallucination_risk_percent": 8,
                     "estimated_confidence_percent": 92,
                 },
@@ -1091,12 +1398,32 @@ class Orchestrator:
             },
         )
 
-        research_mode = _looks_like_web_research_prompt(user_message)
+        task_route_info = _decide_task_route(user_message)
+        task_route = task_route_info["route"]
+        route_confidence = float(task_route_info.get("confidence", 0.0) or 0.0)
+        _emit_progress(progress_callback, f"Routing: {task_route}")
+        record_trace_event(
+            kind="routing.decision",
+            message=f"route={task_route}",
+            payload={
+                "route": task_route,
+                "reason": task_route_info.get("reason", ""),
+                "confidence": route_confidence,
+            },
+        )
+
+        research_mode = task_route == "research" or _looks_like_web_research_prompt(user_message)
+        search_path = _choose_web_search_path(user_message) if research_mode else ""
         rag_context = self._vector_store.get_context_string(user_message)
         if research_mode:
             rag_context = ""
         if rag_context:
             _emit_progress(progress_callback, "Gathering workspace context")
+            record_trace_event(
+                kind="context.workspace",
+                message="workspace context loaded",
+                payload={"chars": len(rag_context)},
+            )
         url_research_context = await self._build_url_research_context(
             user_message,
             progress_callback=progress_callback,
@@ -1105,6 +1432,16 @@ class Orchestrator:
             user_message,
             progress_callback=progress_callback,
         )
+        if url_research_context or web_research_context:
+            record_trace_event(
+                kind="research.context",
+                message="research context prepared",
+                payload={
+                    "url_context_chars": len(url_research_context),
+                    "web_context_chars": len(web_research_context),
+                    "search_path": search_path,
+                },
+            )
         _emit_progress(progress_callback, "Calculating runtime budget")
         agent_registry = _build_agent_registry_text()
         recent_execs = "" if research_mode else _build_recent_executions_text()
@@ -1120,6 +1457,31 @@ class Orchestrator:
             web_research_context=web_research_context,
             shared_context=shared_ctx,
         )
+        research_source_count = url_research_context.count("### Source ") + web_research_context.count("- [W")
+        suggested_model = _suggest_model_for_task(
+            self._provider.provider_name(),
+            task_route,
+            task_profile["level"],
+            self._provider.config.model,
+        )
+        runtime_model = suggested_model or self._provider.config.model
+        if suggested_model and suggested_model != self._provider.config.model:
+            _emit_progress(progress_callback, f"Routing model: {suggested_model}")
+        try:
+            self._current_goal = user_message[:1200]
+            self._current_route = task_route
+            self._route_reason = str(task_route_info.get("reason", ""))
+            self._route_confidence = route_confidence
+            self._recommended_model = runtime_model
+            self._search_path = search_path
+            set_shared_state_value(self._session_id, "current_route", task_route)
+            set_shared_state_value(self._session_id, "route_reason", task_route_info.get("reason", ""))
+            set_shared_state_value(self._session_id, "route_confidence", route_confidence)
+            set_shared_state_value(self._session_id, "recommended_model", runtime_model)
+            set_shared_state_value(self._session_id, "current_goal", self._current_goal)
+            set_shared_state_value(self._session_id, "search_path", self._search_path)
+        except Exception:
+            pass
         runtime_limits = _suggest_runtime_limits(
             task_profile["level"],
             self._provider.config.max_tokens,
@@ -1128,6 +1490,7 @@ class Orchestrator:
         llm = self._ensure_llm(
             max_tokens=runtime_limits["max_tokens"],
             temperature=runtime_limits["temperature"],
+            model_name=runtime_model,
         )
         system_text = SYSTEM_PROMPT.format(
             agent_registry=agent_registry,
@@ -1143,7 +1506,7 @@ class Orchestrator:
             messages.append(SystemMessage(
                 content=f"[CONVERSATION SUMMARY]\n{self._conversation_summary}"
             ))
-        messages.extend(self._history)
+        messages.extend(_dedupe_history_messages(self._history, limit=8))
         messages.append(HumanMessage(content=user_message))
 
         full_text = ""
@@ -1156,6 +1519,7 @@ class Orchestrator:
                     full_text += token
                     yield {"type": "token", "content": token}
         except Exception as exc:
+            finish_trace(status="error", final_answer="LLM provider unavailable")
             yield {
                 "type": "error",
                 "content": "LLM error: provider unavailable. Make sure Ollama is running.",
@@ -1180,6 +1544,11 @@ class Orchestrator:
             delegation_results = await self._execute_delegations_parallel(
                 parsed.delegation_payloads,
                 progress_callback=progress_callback,
+            )
+            record_trace_event(
+                kind="delegation.summary",
+                message="delegated work completed",
+                payload={"count": len(delegation_results)},
             )
             for result in delegation_results:
                 yield {"type": "delegation_result", "result": result}
@@ -1208,7 +1577,7 @@ class Orchestrator:
                 "task_level": task_profile["level"],
                 "task_score": task_profile["score"],
                 "provider": self._provider.provider_name(),
-                "model": self._provider.config.model,
+                "model": runtime_model,
                 "max_tokens": runtime_limits["max_tokens"],
             },
         )
@@ -1229,6 +1598,23 @@ class Orchestrator:
             task_complexity=task_profile["level"],
             token_budget=runtime_limits["max_tokens"],
             memory_turns=len(self._history),
+            task_route=task_route,
+            route_confidence=route_confidence,
+            route_reason=str(task_route_info.get("reason", "")),
+            search_path=search_path,
+            research_source_count=research_source_count,
+            recommended_model=runtime_model,
+            effective_model=runtime_model,
+            trace_id=trace_id,
+        )
+        finish_trace(
+            status="completed",
+            final_answer=parsed.conversation_text,
+            prompt_tokens=metrics.get("prompt_tokens", 0),
+            completion_tokens=metrics.get("completion_tokens", 0),
+            total_tokens=metrics.get("total_tokens", 0),
+            search_path=search_path,
+            research_source_count=research_source_count,
         )
 
         yield {
@@ -1281,6 +1667,35 @@ class Orchestrator:
         for attempt in range(max_retries):
             start_time = time.time()
             try:
+                policy = load_config()
+                decision = evaluate_permission(policy, "agent_scopes", agent_name, action)
+                record_trace_event(
+                    kind="agent.permission",
+                    agent=agent_name,
+                    action=action,
+                    message="permission evaluated",
+                    status="info",
+                    payload={
+                        "allowed": decision.allowed,
+                        "reason": decision.reason,
+                        "attempt": attempt + 1,
+                    },
+                )
+                if not decision.allowed:
+                    record_trace_event(
+                        kind="agent.execute",
+                        agent=agent_name,
+                        action=action,
+                        message="permission denied",
+                        status="error",
+                        payload={"reason": decision.reason, "attempt": attempt + 1},
+                    )
+                    return AgentResult(
+                        success=False,
+                        agent=agent_name,
+                        action=action,
+                        error=decision.reason or f"Agent scope blocked for {agent_name}",
+                    )
                 agent = get_agent(agent_name)
                 _emit_progress(progress_callback, f"Running {agent_name}.{action}")
                 result = await asyncio.to_thread(agent.execute, action, params)
@@ -1294,6 +1709,18 @@ class Orchestrator:
                     result_data=result.data,
                     error=result.error,
                     duration_ms=duration,
+                )
+                record_trace_event(
+                    kind="agent.execute",
+                    agent=agent_name,
+                    action=action,
+                    message="agent completed",
+                    status="success" if result.success else "error",
+                    payload={
+                        "success": result.success,
+                        "duration_ms": duration,
+                        "error": result.error,
+                    },
                 )
 
                 # ── Auto-publish result to the shared context memory bus ──
@@ -1328,6 +1755,14 @@ class Orchestrator:
             except KeyError as exc:
 
                 duration = (time.time() - start_time) * 1000
+                record_trace_event(
+                    kind="agent.execute",
+                    agent=agent_name,
+                    action=action,
+                    message="agent not found",
+                    status="error",
+                    payload={"duration_ms": duration},
+                )
                 log_execution(
                     agent=agent_name, action=action, params=params,
                     success=False, error="Agent not found", duration_ms=duration,
@@ -1338,6 +1773,14 @@ class Orchestrator:
             except Exception as exc:
                 duration = (time.time() - start_time) * 1000
                 last_error = "Agent execution failed"
+                record_trace_event(
+                    kind="agent.execute",
+                    agent=agent_name,
+                    action=action,
+                    message="agent exception",
+                    status="error",
+                    payload={"duration_ms": duration, "error": last_error},
+                )
                 log_execution(
                     agent=agent_name, action=action, params=params,
                     success=False, error=last_error, duration_ms=duration,
@@ -1363,8 +1806,8 @@ class Orchestrator:
         if len(self._history) < SUMMARIZE_THRESHOLD:
             return
 
-        to_summarize = self._history[:-10]
-        to_keep = self._history[-10:]
+        to_summarize = self._history[:-6]
+        to_keep = self._history[-6:]
 
         summary_prompt = (
             "Summarize the following conversation in 3-5 bullet points. "
@@ -1386,15 +1829,9 @@ class Orchestrator:
             new_summary = response.content.strip()
 
             if self._conversation_summary:
-                self._conversation_summary = (
-                    f"{self._conversation_summary}\n\n"
-                    f"[More recent context]\n{new_summary}"
-                )
-
-                if len(self._conversation_summary) > 2000:
-                    self._conversation_summary = self._conversation_summary[-2000:]
+                self._conversation_summary = _compact_summary(self._conversation_summary, new_summary, limit=1200)
             else:
-                self._conversation_summary = new_summary
+                self._conversation_summary = _compact_summary("", new_summary, limit=1200)
 
             try:
                 set_shared_state_value(self._session_id, "conversation_summary", self._conversation_summary)
@@ -1415,9 +1852,20 @@ class Orchestrator:
 
         self._history.clear()
         self._conversation_summary = ""
+        self._current_goal = ""
+        self._current_route = "direct"
+        self._route_reason = ""
+        self._route_confidence = 0.0
+        self._recommended_model = ""
+        self._search_path = ""
         try:
             set_shared_state_value(self._session_id, "conversation_summary", "")
             set_shared_state_value(self._session_id, "current_goal", "")
+            set_shared_state_value(self._session_id, "current_route", "")
+            set_shared_state_value(self._session_id, "route_reason", "")
+            set_shared_state_value(self._session_id, "route_confidence", 0.0)
+            set_shared_state_value(self._session_id, "recommended_model", "")
+            set_shared_state_value(self._session_id, "search_path", "")
             set_shared_state_value(self._session_id, "current_focus", "")
             set_shared_state_value(self._session_id, "last_role", "")
             set_shared_state_value(self._session_id, "last_response_summary", "")

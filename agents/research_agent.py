@@ -11,6 +11,8 @@ from typing import Any
 from urllib.parse import urlparse
 
 from agents import BaseAgent
+from limbi.permissions import require_permission
+from limbi.workspace import load_config
 
 logger = logging.getLogger("limbi.agents.research")
 
@@ -58,6 +60,10 @@ class ResearchAgent(BaseAgent):
             ],
         }
 
+    def _require_network_access(self, action: str) -> None:
+        config = load_config()
+        require_permission(config, "network", self.agent_name, action)
+
     def handle_web_search(
         self,
         query: str = "",
@@ -83,16 +89,27 @@ class ResearchAgent(BaseAgent):
             or engine
             or "auto"
         )
+        self._require_network_access("web_search")
         results, search_engine, resolved_path = self._search_web(
             query,
             num_results=num_results,
             engine=search_path,
         )
 
+        cited_results: list[dict[str, Any]] = []
+        for index, item in enumerate(results, start=1):
+            result = dict(item)
+            result["citation"] = f"[W{index}]"
+            result["rank"] = index
+            result["source_rank"] = index
+            evidence = str(result.get("snippet") or result.get("title") or "").strip()
+            result["quoted_evidence"] = evidence[:280]
+            cited_results.append(result)
+
         return {
             "message": f"Found {len(results)} results for '{query}'",
             "query": query,
-            "results": results,
+            "results": cited_results,
             "search_engine": search_engine,
             "search_path": resolved_path,
             "note": f"Live web search used best-effort public search endpoints via {resolved_path}",
@@ -116,6 +133,7 @@ class ResearchAgent(BaseAgent):
         if not url:
             raise ValueError("A 'url' is required")
 
+        self._require_network_access("fetch_url")
         url = _normalize_target_url(url)
         parsed = urlparse(url)
         if not parsed.scheme or not parsed.netloc:
@@ -146,8 +164,11 @@ class ResearchAgent(BaseAgent):
                     "status_code": resp.status_code,
                     "content_length": len(content),
                     "content": content[:5000],
+                    "excerpt": content[:280].strip(),
+                    "quoted_evidence": content[:220].strip(),
                     "truncated": len(content) > 5000,
                     "from_cache": False,
+                    "citation": f"[U{len(_url_cache) + 1}]",
                 }
                 _url_cache[cache_key] = result
                 return result
@@ -158,6 +179,8 @@ class ResearchAgent(BaseAgent):
                 "url": url,
                 "error": str(exc),
                 "content": f"Could not fetch URL: {exc}. In production, configure httpx.",
+                "excerpt": "",
+                "quoted_evidence": "",
                 "from_cache": False,
             }
 
@@ -287,12 +310,19 @@ class ResearchAgent(BaseAgent):
             for i, terms in enumerate(source_terms)
         ]
 
+        disagreements: list[str] = []
+        if agreement_ratio < 0.35:
+            disagreements.append("Sources disagree substantially.")
+        elif agreement_ratio < 0.6:
+            disagreements.append("Sources overlap but still vary in emphasis and detail.")
+
         return {
             "message": f"Compared {len(sources)} sources on '{topic}'",
             "topic": topic,
             "agreement_ratio": round(agreement_ratio, 2),
             "common_themes": list(common_terms)[:20],
             "source_analysis": unique_per_source,
+            "disagreements": disagreements,
             "consensus": "strong" if agreement_ratio > 0.6 else "moderate" if agreement_ratio > 0.3 else "weak",
         }
 

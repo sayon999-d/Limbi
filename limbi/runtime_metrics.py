@@ -106,6 +106,14 @@ def build_runtime_metrics(
     task_complexity: str = "moderate",
     token_budget: int = 0,
     memory_turns: int = 0,
+    task_route: str = "",
+    route_confidence: float = 0.0,
+    route_reason: str = "",
+    search_path: str = "",
+    research_source_count: int = 0,
+    recommended_model: str = "",
+    effective_model: str = "",
+    trace_id: str = "",
 ) -> dict[str, Any]:
     usage = extract_usage_metadata(response, prompt_text=prompt_text, completion_text=raw_text)
     risk = estimate_hallucination_risk(
@@ -124,6 +132,14 @@ def build_runtime_metrics(
         "task_complexity": task_complexity,
         "runtime_token_budget": token_budget,
         "memory_turns": memory_turns,
+        "task_route": task_route,
+        "route_confidence": round(route_confidence, 2),
+        "route_reason": route_reason,
+        "search_path": search_path,
+        "research_source_count": research_source_count,
+        "recommended_model": recommended_model,
+        "effective_model": effective_model or recommended_model,
+        "trace_id": trace_id,
         "estimated_hallucination_risk_percent": risk,
         "estimated_confidence_percent": 100 - risk,
     }

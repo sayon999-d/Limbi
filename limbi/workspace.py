@@ -13,9 +13,27 @@ logger = logging.getLogger("limbi.workspace")
 WORKSPACE_DIR_NAME = ".limbi"
 API_KEYS_CONFIG_KEY = "provider_api_keys"
 CUSTOM_SKILLS_CONFIG_KEY = "custom_skills"
+PERMISSIONS_CONFIG_KEY = "permissions"
+
+_DEFAULT_PERMISSION_POLICY = {
+    "network": {
+        "default": "allow",
+        "research_agent": "allow",
+        "browser_agent": "allow",
+        "web_scraping_agent": "allow",
+    },
+    "filesystem": {
+        "default": "workspace_only",
+        "file_agent": "workspace_only",
+    },
+    "agent_scopes": {
+        "default": "allow",
+        "mutation_agent": "approval_required",
+    },
+}
 
 _DEFAULT_CONFIG = {
-    "version": "1.5.8",
+    "version": "1.6.0",
     "created_at": "",
     "provider": "ollama",
     "model": "llama3.2:3b",
@@ -26,6 +44,7 @@ _DEFAULT_CONFIG = {
     "auto_publish_context": True,
     API_KEYS_CONFIG_KEY: {},
     CUSTOM_SKILLS_CONFIG_KEY: {},
+    PERMISSIONS_CONFIG_KEY: _DEFAULT_PERMISSION_POLICY,
 }
 
 
@@ -81,10 +100,43 @@ def _normalize_custom_skills(config: dict[str, Any]) -> dict[str, Any]:
             "provider": str(skill.get("provider", "")).strip(),
             "model": str(skill.get("model", "")).strip(),
             "base_url": str(skill.get("base_url", "")).strip(),
+            "version": str(skill.get("version", "")).strip() or "1.0.0",
             "created_at": str(skill.get("created_at", "")).strip(),
             "updated_at": str(skill.get("updated_at", "")).strip(),
         }
     normalized[CUSTOM_SKILLS_CONFIG_KEY] = cleaned
+    return normalized
+
+
+def _normalize_permissions(config: dict[str, Any]) -> dict[str, Any]:
+    normalized = dict(config)
+    policy = normalized.get(PERMISSIONS_CONFIG_KEY)
+    if not isinstance(policy, dict):
+        policy = {}
+
+    cleaned: dict[str, dict[str, str]] = {}
+    for scope, entries in _DEFAULT_PERMISSION_POLICY.items():
+        scope_entries = policy.get(scope)
+        if not isinstance(scope_entries, dict):
+            scope_entries = {}
+        merged: dict[str, str] = {str(k).strip().lower(): str(v).strip().lower() for k, v in entries.items()}
+        for key, value in scope_entries.items():
+            cleaned_key = str(key).strip().lower()
+            cleaned_value = str(value).strip().lower()
+            if cleaned_key and cleaned_value:
+                merged[cleaned_key] = cleaned_value
+        cleaned[scope] = merged
+
+    for scope, entries in policy.items():
+        if scope in cleaned or not isinstance(entries, dict):
+            continue
+        cleaned[scope] = {
+            str(key).strip().lower(): str(value).strip().lower()
+            for key, value in entries.items()
+            if str(key).strip() and str(value).strip()
+        }
+
+    normalized[PERMISSIONS_CONFIG_KEY] = cleaned
     return normalized
 
 
@@ -172,7 +224,11 @@ def init_workspace(base_dir: str | None = None) -> dict[str, Any]:
             )
 
         config_path.write_text(
-            json.dumps(_normalize_custom_skills(_normalize_provider_api_keys(config)), indent=2) + "\n",
+            json.dumps(
+                _normalize_permissions(_normalize_custom_skills(_normalize_provider_api_keys(config))),
+                indent=2,
+            )
+            + "\n",
             encoding="utf-8",
         )
         created.append(".limbi/config.json")
@@ -233,7 +289,7 @@ def load_config(base_dir: str | None = None) -> dict[str, Any]:
     if config_path.exists():
         try:
             loaded = json.loads(config_path.read_text(encoding="utf-8"))
-            normalized = _normalize_custom_skills(_normalize_provider_api_keys(loaded))
+            normalized = _normalize_permissions(_normalize_custom_skills(_normalize_provider_api_keys(loaded)))
             if normalized != loaded:
                 save_config(normalized, base_dir=base_dir)
             return normalized
@@ -247,9 +303,50 @@ def save_config(config: dict[str, Any], base_dir: str | None = None) -> None:
     ws = get_workspace_path(base_dir)
     config_path = ws / "config.json"
     config_path.write_text(
-        json.dumps(_normalize_custom_skills(_normalize_provider_api_keys(config)), indent=2) + "\n",
+        json.dumps(
+            _normalize_permissions(_normalize_custom_skills(_normalize_provider_api_keys(config))),
+            indent=2,
+        )
+        + "\n",
         encoding="utf-8",
     )
+
+
+def get_permission_policy(config: dict[str, Any]) -> dict[str, Any]:
+    normalized = _normalize_permissions(config)
+    policy = normalized.get(PERMISSIONS_CONFIG_KEY)
+    return policy if isinstance(policy, dict) else {}
+
+
+def set_permission_policy(
+    config: dict[str, Any],
+    scope: str,
+    actor: str,
+    mode: str,
+) -> dict[str, Any]:
+    normalized = dict(config)
+    policy = get_permission_policy(normalized)
+    scope_key = str(scope or "").strip().lower()
+    actor_key = str(actor or "").strip().lower()
+    mode_key = str(mode or "").strip().lower()
+    if not scope_key or not actor_key or not mode_key:
+        return normalized
+    scope_policy = dict(policy.get(scope_key, {}))
+    scope_policy[actor_key] = mode_key
+    policy[scope_key] = scope_policy
+    normalized[PERMISSIONS_CONFIG_KEY] = policy
+    return _normalize_permissions(normalized)
+
+
+def is_permission_allowed(
+    config: dict[str, Any],
+    scope: str,
+    actor: str,
+    action: str = "",
+) -> bool:
+    from .permissions import evaluate_permission
+
+    return evaluate_permission(config, scope, actor, action).allowed
 
 
 def get_db_path(name: str) -> str:
@@ -315,6 +412,7 @@ def set_custom_skill(
         "provider": str(skill.get("provider", "")).strip(),
         "model": str(skill.get("model", "")).strip(),
         "base_url": str(skill.get("base_url", "")).strip(),
+        "version": str(skill.get("version", "")).strip() or "1.0.0",
         "created_at": str(skill.get("created_at", "")).strip() or now,
         "updated_at": now,
     }
@@ -329,3 +427,55 @@ def delete_custom_skill(config: dict[str, Any], name: str) -> dict[str, Any]:
     skills.pop(skill_name, None)
     normalized[CUSTOM_SKILLS_CONFIG_KEY] = skills
     return normalized
+
+
+def export_custom_skill(config: dict[str, Any], name: str) -> dict[str, Any]:
+    skill = get_custom_skill(config, name)
+    if not skill:
+        return {}
+    export = dict(skill)
+    export["exported_at"] = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
+    return export
+
+
+def export_custom_skill_pack(config: dict[str, Any], name: str) -> dict[str, Any]:
+    skill = get_custom_skill(config, name)
+    if not skill:
+        return {}
+    exported_at = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
+    return {
+        "format": "limbi-skill-pack",
+        "exported_at": exported_at,
+        "manifest": {
+            "name": skill.get("name", name),
+            "version": skill.get("version", "1.0.0"),
+            "provider": skill.get("provider", ""),
+            "model": skill.get("model", ""),
+            "base_url": skill.get("base_url", ""),
+            "description": skill.get("description", ""),
+        },
+        "skill": dict(skill),
+    }
+
+
+def import_custom_skill(
+    config: dict[str, Any],
+    skill: dict[str, Any],
+) -> dict[str, Any]:
+    normalized = dict(config)
+    skill_name = str(skill.get("name") or skill.get("skill_name") or "").strip()
+    if not skill_name:
+        raise ValueError("Imported skill requires a name")
+    return set_custom_skill(normalized, skill_name, skill)
+
+
+def import_custom_skill_pack(
+    config: dict[str, Any],
+    pack: dict[str, Any],
+) -> dict[str, Any]:
+    skill = pack.get("skill") if isinstance(pack, dict) else None
+    if not isinstance(skill, dict):
+        skill = pack if isinstance(pack, dict) else {}
+    if not skill:
+        raise ValueError("Imported skill pack requires a skill payload")
+    return import_custom_skill(config, skill)

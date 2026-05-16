@@ -5,6 +5,13 @@ from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
 from typing import Any, ClassVar
 
+from limbi.agent_contracts import (
+    ActionContract,
+    build_action_contract,
+    validate_action_params,
+)
+from limbi.tracing import record_trace_event
+
 logger = logging.getLogger("limbi.agents")
 
 @dataclass
@@ -29,6 +36,12 @@ class BaseAgent(ABC):
 
     agent_name: ClassVar[str] = ""
 
+    def action_contract(self, action: str) -> ActionContract | None:
+        handler = getattr(self, f"handle_{action}", None)
+        if handler is None:
+            return None
+        return build_action_contract(self.agent_name, action, handler)
+
     def __init_subclass__(cls, **kwargs: Any) -> None:
         super().__init_subclass__(**kwargs)
         if cls.agent_name:
@@ -38,6 +51,14 @@ class BaseAgent(ABC):
     def execute(self, action: str, params: dict[str, Any] | None = None) -> AgentResult:
         handler = getattr(self, f"handle_{action}", None)
         if handler is None:
+            record_trace_event(
+                kind="agent.execute",
+                agent=self.agent_name,
+                action=action,
+                message="unknown action",
+                payload={"params": params or {}},
+                status="error",
+            )
             return AgentResult(
                 success=False,
                 agent=self.agent_name,
@@ -46,10 +67,51 @@ class BaseAgent(ABC):
                       f"Available: {self.available_actions}",
             )
         try:
-            data = handler(**(params or {}))
+            cleaned_params, validation_errors = validate_action_params(handler, params or {})
+            if validation_errors:
+                error_text = "; ".join(validation_errors)
+                record_trace_event(
+                    kind="agent.execute",
+                    agent=self.agent_name,
+                    action=action,
+                    message="validation failed",
+                    payload={"params": params or {}, "validation_errors": validation_errors},
+                    status="error",
+                )
+                return AgentResult(
+                    success=False,
+                    agent=self.agent_name,
+                    action=action,
+                    error=f"Validation error: {error_text}",
+                )
+            record_trace_event(
+                kind="agent.execute",
+                agent=self.agent_name,
+                action=action,
+                message="start",
+                payload={"params": cleaned_params},
+                status="running",
+            )
+            data = handler(**cleaned_params)
+            record_trace_event(
+                kind="agent.execute",
+                agent=self.agent_name,
+                action=action,
+                message="success",
+                payload={"result": data},
+                status="success",
+            )
             return AgentResult(success=True, agent=self.agent_name, action=action, data=data)
         except Exception as exc:
             logger.exception("Agent %s action %s failed", self.agent_name, action)
+            record_trace_event(
+                kind="agent.execute",
+                agent=self.agent_name,
+                action=action,
+                message="exception",
+                payload={"error": f"{type(exc).__name__}: {exc}"},
+                status="error",
+            )
             return AgentResult(
                 success=False,
                 agent=self.agent_name,

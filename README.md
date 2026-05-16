@@ -15,7 +15,7 @@
 
 Limbi is an omni-agent orchestration platform for running many specialized AI agents from one command, one Python API, or one MCP-compatible editor workflow.
 
-Current package version: `1.5.8`
+Current package version: `1.6.0`
 
 ## Recent Updates
 
@@ -27,6 +27,8 @@ What was added:
 
 - Live progress stages during thinking, so you can see when Limbi is planning, searching,
   calculating, generating, or running delegated agents.
+- A shorter terminal command surface so the banner and quick help only show the commands
+  most people actually need during normal use.
 - A custom skill system with `/skills`, `/skill`, update, and delete support.
 - Skill configs that can inherit the current provider, or pin their own provider/model.
 - Saved custom skills in `.limbi/config.json` for later reuse.
@@ -37,6 +39,8 @@ What was added:
   paths selected automatically from the prompt.
 - Graph-backed shared session memory that links related turns, agent results, and follow-up
   work across the session.
+- A tighter rolling context window so repeated turns are compressed instead of replayed
+  over and over.
 - Research answer repair so Limbi can rewrite accidental internal registry dumps into a
   topic-based answer when the prompt was meant to be research.
 - Adaptive runtime budgeting so simple tasks stay light and harder tasks get more room.
@@ -51,6 +55,8 @@ What changed:
   pages before answering.
 - Session memory is no longer only linear. Limbi now uses graph-linked context so related
   work is easier to recall and share across agents.
+- The running context is compacted more aggressively so the prompt window stays lighter and
+  less repetitive.
 - Research prompts are filtered so Limbi answers the topic instead of dumping internal
   agent registry text.
 - The release flow has been kept explicit so version bumps stay predictable.
@@ -782,6 +788,25 @@ limbi "prompt"
 limbi --list-agents
 ```
 
+The on-screen command list is intentionally short:
+
+| Command | Description |
+|---------|-------------|
+| `/models` | Choose provider and model for the current session |
+| `/keys` | Manage saved API keys for providers |
+| `/skills` | Open the custom skill manager |
+| `/skill` | Run a saved custom skill with a task |
+| `/agents` | Manually choose an agent and run one action |
+| `/agent` | Alias for `/agents` |
+| `/trust` | Show workspace trust status |
+| `/clear` | Clear conversation history |
+| `/help` | Show the short help list |
+| `/quit` | Exit Limbi |
+
+Advanced commands like `/trace`, `/traces`, `/permissions`, `/eval`, `/benchmark`, `/list`,
+`/providers`, `/model`, and `/key` still exist, but they are kept out of the main banner so
+the CLI stays focused during normal work.
+
 ## Provider Configuration
 
 | Variable | Default | Purpose |
@@ -801,7 +826,7 @@ If you enable `LIMBI_API_KEY`, set the same value in the VS Code setting `limbi.
 
 ## Manual Control Commands
 
-Use `/models` when you want to choose the provider, model, and endpoint manually for the current session. Limbi will ask for an API key only when the selected provider actually needs one.
+Use `/models` when you want to choose the provider and model manually for the current session. Limbi will ask for an API key only when the selected provider actually needs one.
 
 Use `/agent` when you want to manually choose one registered agent and run one of its actions directly.
 

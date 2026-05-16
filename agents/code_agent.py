@@ -8,9 +8,12 @@ import logging
 import os
 import subprocess
 import tempfile
+from pathlib import Path
 from typing import Any
 
 from agents import BaseAgent
+from limbi.permissions import require_permission
+from limbi.workspace import load_config
 
 logger = logging.getLogger("limbi.agents.code")
 
@@ -230,6 +233,10 @@ class CodeAgent(BaseAgent):
             or Path.cwd()
         ).expanduser().resolve()
 
+    def _require_filesystem_access(self, action: str) -> None:
+        config = load_config()
+        require_permission(config, "filesystem", self.agent_name, action)
+
     def _safe_target(self, path: str) -> Path:
         target = Path(path).expanduser().resolve()
         workspace_root = self._workspace_root()
@@ -277,6 +284,7 @@ class CodeAgent(BaseAgent):
         overwrite: bool = True,
         **kw: Any,
     ) -> dict[str, Any]:
+        self._require_filesystem_access("write_to_file")
         path = self._resolve_path(path, **kw)
         if not content:
             raise ValueError("'content' is required")

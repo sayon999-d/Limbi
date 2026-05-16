@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import hmac
+import ipaddress
 import logging
 import os
 import time
@@ -102,14 +103,37 @@ def _is_public_path(path: str) -> bool:
         return True
     return any(path.startswith(prefix) for prefix in _PUBLIC_PREFIXES)
 
+def _is_loopback_client(request: Request) -> bool:
+    host = (request.client.host if request.client else "").strip().lower()
+    if not host:
+        return False
+    if host in {"localhost", "127.0.0.1", "::1"}:
+        return True
+    try:
+        ip = ipaddress.ip_address(host)
+        return bool(ip.is_loopback)
+    except ValueError:
+        return False
+
 class ApiKeyAuthMiddleware(BaseHTTPMiddleware):
     async def dispatch(self, request: Request, call_next) -> Response:
         expected_key = get_api_key()
-        if not expected_key or request.method == "OPTIONS":
+        if request.method == "OPTIONS":
             return await call_next(request)
 
         path = request.url.path
         if not path.startswith("/api/") or _is_public_path(path):
+            return await call_next(request)
+
+        if not expected_key and not _is_loopback_client(request):
+            logger.warning("Remote API access blocked on %s without an API key", path)
+            return JSONResponse(
+                status_code=401,
+                content={"detail": "API access is restricted to localhost until LIMBI_API_KEY is set."},
+                headers={"WWW-Authenticate": "Bearer"},
+            )
+
+        if not expected_key:
             return await call_next(request)
 
         provided_key = _extract_auth_token(request)

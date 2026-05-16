@@ -10,6 +10,8 @@ from pathlib import Path
 from typing import Any
 
 from . import BaseAgent
+from limbi.permissions import require_permission
+from limbi.workspace import load_config
 
 logger = logging.getLogger("limbi.agents.file")
 
@@ -118,6 +120,10 @@ class FileAgent(BaseAgent):
 
     def _safe_workspace_target(self, path: str = "", **kw: Any) -> Path:
         return Path(self._resolve_path(path, **kw))
+
+    def _require_filesystem_access(self, action: str) -> None:
+        config = load_config()
+        require_permission(config, "filesystem", self.agent_name, action)
 
     def _infer_language(self, language: str = "", content: str = "", path: str = "") -> str:
         explicit = (language or "").strip().lower()
@@ -372,6 +378,7 @@ class FileAgent(BaseAgent):
         overwrite: bool = False,
         **kw: Any,
     ) -> dict[str, Any]:
+        self._require_filesystem_access("create_file")
         path = self._resolve_path(path, **kw)
         target_path, inferred_language = self._normalize_target_path(path, language=language, content=content)
         target = self._safe_workspace_target(target_path)
@@ -403,6 +410,7 @@ class FileAgent(BaseAgent):
         append: bool = False,
         **kw: Any,
     ) -> dict[str, Any]:
+        self._require_filesystem_access("write_file")
         path = self._resolve_path(path, **kw)
         target_path, inferred_language = self._normalize_target_path(path, language=language, content=content)
         target = self._safe_workspace_target(target_path)
@@ -431,6 +439,7 @@ class FileAgent(BaseAgent):
         overwrite: bool = True,
         **kw: Any,
     ) -> dict[str, Any]:
+        self._require_filesystem_access("write_to_file")
         return self.handle_write_file(path=path, content=content, language=language, append=append, **kw)
 
     def handle_save(
@@ -442,6 +451,7 @@ class FileAgent(BaseAgent):
         overwrite: bool = True,
         **kw: Any,
     ) -> dict[str, Any]:
+        self._require_filesystem_access("save")
         return self.handle_write_to_file(
             path=path,
             content=content,
@@ -458,6 +468,7 @@ class FileAgent(BaseAgent):
         end_line: int = 0,
         **kw: Any,
     ) -> dict[str, Any]:
+        self._require_filesystem_access("modify_file")
         if not path:
             raise ValueError("A file 'path' is required")
 
@@ -565,6 +576,7 @@ class FileAgent(BaseAgent):
         new_name: str = "",
         **kw: Any,
     ) -> dict[str, Any]:
+        self._require_filesystem_access("rename_file")
         if not path or not new_name:
             raise ValueError("Both 'path' and 'new_name' are required")
 
@@ -596,6 +608,7 @@ class FileAgent(BaseAgent):
     ) -> dict[str, Any]:
         import shutil
 
+        self._require_filesystem_access("copy_file")
         if not source or not destination:
             raise ValueError("Both 'source' and 'destination' are required")
 
@@ -626,6 +639,7 @@ class FileAgent(BaseAgent):
     ) -> dict[str, Any]:
         import shutil
 
+        self._require_filesystem_access("move_file")
         if not source or not destination:
             raise ValueError("Both 'source' and 'destination' are required")
 
@@ -650,6 +664,7 @@ class FileAgent(BaseAgent):
         path: str = "",
         **kw: Any,
     ) -> dict[str, Any]:
+        self._require_filesystem_access("create_directory")
         if not path:
             raise ValueError("A directory 'path' is required")
 
@@ -677,6 +692,7 @@ class FileAgent(BaseAgent):
     ) -> dict[str, Any]:
         import shutil
 
+        self._require_filesystem_access("delete_directory")
         if not path:
             raise ValueError("A directory 'path' is required")
 
@@ -708,6 +724,7 @@ class FileAgent(BaseAgent):
         mode: str = "",
         **kw: Any,
     ) -> dict[str, Any]:
+        self._require_filesystem_access("set_permissions")
         if not path or not mode:
             raise ValueError("Both 'path' and 'mode' (e.g. '755') are required")
 
@@ -737,6 +754,7 @@ class FileAgent(BaseAgent):
     ) -> dict[str, Any]:
         import subprocess
 
+        self._require_filesystem_access("execute_file")
         if not path:
             raise ValueError("A file 'path' is required")
 

@@ -25,6 +25,11 @@ _agent_subscriptions: dict[str, set[str]] = {}
 _GRAPH_EDGE_BONUS = 0.12
 _GRAPH_RECENCY_BONUS = 0.08
 _GRAPH_QUERY_BONUS = 0.22
+_TOPIC_STOPWORDS = {
+    "the", "and", "for", "with", "from", "that", "this", "what", "when", "where",
+    "why", "how", "into", "your", "you", "are", "can", "need", "want", "have",
+    "about", "there", "here", "user", "limbi", "agent",
+}
 
 
 def _normalize_graph_tokens(text: str) -> set[str]:
@@ -33,6 +38,41 @@ def _normalize_graph_tokens(text: str) -> set[str]:
         for token in re.findall(r"[a-z0-9_]+", (text or "").lower())
         if len(token) > 2
     }
+
+
+def _extract_topic_cluster(text: str) -> str:
+    tokens = [token for token in re.findall(r"[a-z0-9_]+", (text or "").lower()) if len(token) > 2]
+    filtered = [token for token in tokens if token not in _TOPIC_STOPWORDS]
+    if not filtered:
+        return "general"
+    counts: dict[str, int] = {}
+    for token in filtered:
+        counts[token] = counts.get(token, 0) + 1
+    ordered = sorted(counts.items(), key=lambda item: (-item[1], -len(item[0]), item[0]))
+    top = [token for token, _ in ordered[:2]]
+    return " / ".join(top) if top else "general"
+
+
+def _update_topic_clusters(session_id: str, content: str, role: str, source_agent: str) -> dict[str, Any]:
+    topic = _extract_topic_cluster(content)
+    snapshot = get_shared_state_value(session_id).get("state", {})
+    clusters = snapshot.get("topic_clusters")
+    if not isinstance(clusters, dict):
+        clusters = {}
+    cluster = clusters.get(topic, {})
+    cluster["count"] = int(cluster.get("count", 0) or 0) + 1
+    cluster["last_role"] = role
+    cluster["last_source_agent"] = source_agent
+    cluster["last_seen"] = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
+    clusters[topic] = cluster
+    set_shared_state_value(session_id, "topic_clusters", clusters)
+    set_shared_state_value(session_id, "active_project_state", {
+        "topic": topic,
+        "goal": snapshot.get("current_goal", ""),
+        "route": snapshot.get("current_route", ""),
+        "model": snapshot.get("recommended_model", ""),
+    })
+    return {"topic": topic, "clusters": clusters}
 
 
 def _parse_timestamp(value: str) -> float:
@@ -443,6 +483,9 @@ def _graph_recall_context(
                 for key in ("current_goal", "current_focus", "last_response_summary")
             )
         )
+        active_project_state = state.get("active_project_state", {})
+    else:
+        active_project_state = {}
 
     with _lock:
         conn = _get_conn()
@@ -478,6 +521,13 @@ def _graph_recall_context(
             score += 0.35
         if metadata.get("current_goal"):
             score += 0.05
+        active_topic = str(active_project_state.get("topic") or "").strip().lower()
+        if active_topic and active_topic in tokens:
+            score += 0.2
+        topic_clusters = state.get("topic_clusters") if include_state else {}
+        if isinstance(topic_clusters, dict):
+            if any(topic in tokens for topic in topic_clusters.keys()):
+                score += 0.08
         if overlap:
             score += _GRAPH_QUERY_BONUS
         scored.append((score, row))
@@ -554,6 +604,8 @@ def record_session_turn(
     else:
         set_shared_state_value(session_id, "last_response_summary", short_content)
 
+    _update_topic_clusters(session_id, short_content, role, source_agent)
+
     return entry_id
 
 
@@ -594,6 +646,11 @@ def get_session_context(
         for key in (
             "current_goal",
             "current_focus",
+            "current_route",
+            "recommended_model",
+            "search_path",
+            "active_project_state",
+            "topic_clusters",
             "provider",
             "model",
             "turn_count",

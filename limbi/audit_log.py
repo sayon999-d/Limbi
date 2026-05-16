@@ -73,6 +73,16 @@ def _sanitize_json_text(text: str | None) -> str:
         return _redact_string(str(text))
     return json.dumps(_sanitize_for_audit(loaded))
 
+def _sanitize_trace_text(text: str | None, *, limit: int = 1200) -> str:
+    if not text:
+        return ""
+    cleaned = _redact_string(str(text))
+    cleaned = re.sub(r"https?://\S+", "[REDACTED_URL]", cleaned)
+    cleaned = re.sub(r"\s+", " ", cleaned).strip()
+    if len(cleaned) > limit:
+        cleaned = cleaned[:limit].rstrip() + "…"
+    return cleaned
+
 def _get_conn() -> sqlite3.Connection:
     conn = sqlite3.connect(_DB_PATH, check_same_thread=False)
     conn.row_factory = sqlite3.Row
@@ -107,9 +117,47 @@ def init_db() -> None:
                 status      TEXT DEFAULT 'received'
             );
 
+            CREATE TABLE IF NOT EXISTS prompt_traces (
+                id          INTEGER PRIMARY KEY AUTOINCREMENT,
+                trace_id    TEXT NOT NULL UNIQUE,
+                timestamp   TEXT NOT NULL,
+                session_id  TEXT DEFAULT 'global',
+                prompt      TEXT DEFAULT '',
+                route       TEXT DEFAULT '',
+                route_reason TEXT DEFAULT '',
+                route_confidence REAL DEFAULT 0,
+                provider    TEXT DEFAULT '',
+                model       TEXT DEFAULT '',
+                status      TEXT DEFAULT 'running',
+                start_ms    REAL DEFAULT 0,
+                end_ms      REAL DEFAULT 0,
+                duration_ms REAL DEFAULT 0,
+                prompt_tokens INTEGER DEFAULT 0,
+                completion_tokens INTEGER DEFAULT 0,
+                total_tokens INTEGER DEFAULT 0,
+                search_path TEXT DEFAULT '',
+                research_source_count INTEGER DEFAULT 0,
+                final_answer TEXT DEFAULT ''
+            );
+
+            CREATE TABLE IF NOT EXISTS trace_events (
+                id          INTEGER PRIMARY KEY AUTOINCREMENT,
+                trace_id    TEXT NOT NULL,
+                timestamp   TEXT NOT NULL,
+                kind        TEXT NOT NULL,
+                status      TEXT DEFAULT 'info',
+                agent       TEXT DEFAULT '',
+                action      TEXT DEFAULT '',
+                message     TEXT DEFAULT '',
+                payload     TEXT DEFAULT '{}'
+            );
+
             CREATE INDEX IF NOT EXISTS idx_exec_agent ON execution_log(agent);
             CREATE INDEX IF NOT EXISTS idx_exec_ts ON execution_log(timestamp);
             CREATE INDEX IF NOT EXISTS idx_webhook_corr ON webhook_results(correlation_id);
+            CREATE INDEX IF NOT EXISTS idx_trace_id ON prompt_traces(trace_id);
+            CREATE INDEX IF NOT EXISTS idx_trace_events_id ON trace_events(trace_id);
+            CREATE INDEX IF NOT EXISTS idx_trace_events_ts ON trace_events(timestamp);
         """)
         conn.commit()
         conn.close()
@@ -177,6 +225,166 @@ def log_webhook(
         row_id = cursor.lastrowid
         conn.close()
     return row_id
+
+def start_prompt_trace(
+    trace_id: str,
+    session_id: str,
+    prompt: str,
+    provider: str = "",
+    model: str = "",
+    route: str = "",
+    route_reason: str = "",
+    route_confidence: float = 0.0,
+    start_ms: float = 0.0,
+) -> str:
+
+    with _lock:
+        conn = _get_conn()
+        conn.execute(
+            """INSERT OR REPLACE INTO prompt_traces
+               (trace_id, timestamp, session_id, prompt, route, route_reason, route_confidence,
+                provider, model, status, start_ms)
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'running', ?)""",
+            (
+                trace_id,
+                datetime.now(timezone.utc).isoformat(),
+                session_id,
+                _sanitize_trace_text(prompt),
+                route,
+                route_reason,
+                route_confidence,
+                provider,
+                model,
+                start_ms,
+            ),
+        )
+        conn.commit()
+        conn.close()
+    return trace_id
+
+def log_trace_event(
+    trace_id: str,
+    kind: str,
+    message: str = "",
+    *,
+    status: str = "info",
+    agent: str = "",
+    action: str = "",
+    payload: dict[str, Any] | None = None,
+) -> int:
+
+    with _lock:
+        conn = _get_conn()
+        cursor = conn.execute(
+            """INSERT INTO trace_events
+               (trace_id, timestamp, kind, status, agent, action, message, payload)
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?)""",
+            (
+                trace_id,
+                datetime.now(timezone.utc).isoformat(),
+                kind,
+                status,
+                agent,
+                action,
+                _redact_string(message),
+                json.dumps(_sanitize_for_audit(payload or {})),
+            ),
+        )
+        conn.commit()
+        row_id = cursor.lastrowid
+        conn.close()
+    return row_id
+
+def finish_prompt_trace(
+    trace_id: str,
+    *,
+    status: str = "completed",
+    duration_ms: float = 0.0,
+    end_ms: float = 0.0,
+    prompt_tokens: int = 0,
+    completion_tokens: int = 0,
+    total_tokens: int = 0,
+    search_path: str = "",
+    research_source_count: int = 0,
+    final_answer: str = "",
+) -> None:
+
+    with _lock:
+        conn = _get_conn()
+        conn.execute(
+            """UPDATE prompt_traces
+               SET status = ?,
+                   end_ms = ?,
+                   duration_ms = ?,
+                   prompt_tokens = ?,
+                   completion_tokens = ?,
+                   total_tokens = ?,
+                   search_path = ?,
+                   research_source_count = ?,
+                   final_answer = ?
+               WHERE trace_id = ?""",
+            (
+                status,
+                end_ms,
+                duration_ms,
+                prompt_tokens,
+                completion_tokens,
+                total_tokens,
+                search_path,
+                research_source_count,
+                _sanitize_trace_text(final_answer),
+                trace_id,
+            ),
+        )
+        conn.commit()
+        conn.close()
+
+def get_prompt_trace(trace_id: str) -> dict[str, Any] | None:
+
+    with _lock:
+        conn = _get_conn()
+        trace_row = conn.execute(
+            "SELECT * FROM prompt_traces WHERE trace_id = ?",
+            (trace_id,),
+        ).fetchone()
+        if not trace_row:
+            conn.close()
+            return None
+        event_rows = conn.execute(
+            "SELECT * FROM trace_events WHERE trace_id = ? ORDER BY id ASC",
+            (trace_id,),
+        ).fetchall()
+        conn.close()
+
+    trace = dict(trace_row)
+    trace["prompt"] = _sanitize_trace_text(str(trace.get("prompt") or ""))
+    trace["final_answer"] = _sanitize_trace_text(str(trace.get("final_answer") or ""))
+    trace["events"] = [
+        {
+            **dict(row),
+            "message": _redact_string(str(row["message"] or "")),
+            "payload": _sanitize_json_text(row["payload"]),
+        }
+        for row in event_rows
+    ]
+    return trace
+
+def get_recent_prompt_traces(limit: int = 20) -> list[dict[str, Any]]:
+
+    with _lock:
+        conn = _get_conn()
+        rows = conn.execute(
+            "SELECT * FROM prompt_traces ORDER BY id DESC LIMIT ?",
+            (limit,),
+        ).fetchall()
+        conn.close()
+    traces: list[dict[str, Any]] = []
+    for row in rows:
+        entry = dict(row)
+        entry["prompt"] = _sanitize_trace_text(str(entry.get("prompt") or ""))
+        entry["final_answer"] = _sanitize_trace_text(str(entry.get("final_answer") or ""))
+        traces.append(entry)
+    return traces
 
 def get_recent_executions(limit: int = 20) -> list[dict[str, Any]]:
 

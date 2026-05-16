@@ -8,6 +8,7 @@ import sys
 from typing import Any, get_args, get_origin
 
 import limbi
+from limbi.agent_contracts import build_input_schema
 from limbi.agents import get_agent, list_agents
 
 logger = logging.getLogger("limbi.mcp")
@@ -80,36 +81,6 @@ def json_type_for(annotation: Any, default: Any) -> dict[str, Any]:
         filtered = [arg for arg in args if arg is not type(None)]
         return json_type_for(filtered[0], default) if filtered else {"type": "string"}
     return {"type": "string"}
-
-
-def build_input_schema(handler) -> dict[str, Any]:
-    signature = inspect.signature(handler)
-    properties: dict[str, Any] = {}
-    required: list[str] = []
-
-    for name, param in signature.parameters.items():
-        if name == "self" or param.kind in (
-            inspect.Parameter.VAR_POSITIONAL,
-            inspect.Parameter.VAR_KEYWORD,
-        ):
-            continue
-
-        schema = json_type_for(param.annotation, param.default)
-        if param.default is not inspect._empty and param.default is not None:
-            schema["default"] = param.default
-        properties[name] = schema
-
-        if param.default is inspect._empty:
-            required.append(name)
-
-    result: dict[str, Any] = {
-        "type": "object",
-        "properties": properties,
-        "additionalProperties": True,
-    }
-    if required:
-        result["required"] = required
-    return result
 
 
 def build_tools() -> list[dict[str, Any]]:
