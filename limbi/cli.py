@@ -204,7 +204,7 @@ def _print_banner(console):
 
     banner = Text()
     banner.append("Limbi", style="bold orange1")
-    banner.append(" v1.5.2", style="bold white")
+    banner.append(" v1.5.3", style="bold white")
     banner.append(" - Omni-Agent Orchestrator\n")
     banner.append("Type your prompt, or ", style="white")
     banner.append("/models", style="bold orange1")
@@ -743,8 +743,9 @@ def _parse_json_params(raw: str) -> dict[str, Any]:
     return payload
 
 
-def _run_manual_agent(console) -> None:
+def _run_manual_agent(state: dict[str, Any], console) -> None:
     from limbi.agents import get_agent, list_agents
+    from limbi.agents.context_memory_agent import get_shared_state_value
     from rich.panel import Panel
     from rich.syntax import Syntax
 
@@ -778,6 +779,31 @@ def _run_manual_agent(console) -> None:
         type=str,
     )
     params = _parse_json_params(params_raw)
+    session_id = str(state.get("session_id") or "global")
+    if agent_name == "learning_agent" and action == "get_best_action":
+        session_state = get_shared_state_value(session_id).get("state", {})
+        params.setdefault(
+            "state",
+            str(
+                session_state.get("current_focus")
+                or session_state.get("current_goal")
+                or "general"
+            ),
+        )
+        params.setdefault(
+            "available_actions",
+            [name for name in agent.available_actions if name != "get_best_action"],
+        )
+    elif agent_name == "learning_agent" and action == "record_feedback":
+        session_state = get_shared_state_value(session_id).get("state", {})
+        params.setdefault(
+            "state",
+            str(
+                session_state.get("current_focus")
+                or session_state.get("current_goal")
+                or "general"
+            ),
+        )
     result = agent.execute(action, params)
 
     console.print(
@@ -971,10 +997,10 @@ def _repl(state, console):
                 console.print("Goodbye.")
                 break
             if cmd in ("/agent",):
-                _run_manual_agent(console)
+                _run_manual_agent(state, console)
                 continue
             if cmd in ("/agents",):
-                _run_manual_agent(console)
+                _run_manual_agent(state, console)
                 continue
             if cmd in ("/list",):
                 _print_agent_table(console)
@@ -1101,7 +1127,7 @@ Type a natural-language prompt to talk to Limbi.
     default=False,
     help="Skip workspace trust prompt (for CI/automation).",
 )
-@click.version_option(version="1.5.2", prog_name="limbi")
+@click.version_option(version="1.5.3", prog_name="limbi")
 def main(
     prompt: str | None,
     provider: str | None,

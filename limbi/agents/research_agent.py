@@ -6,6 +6,7 @@ import hashlib
 import logging
 import re
 import time
+from urllib.parse import quote_plus
 from typing import Any
 from urllib.parse import urlparse
 
@@ -35,21 +36,38 @@ class ResearchAgent(BaseAgent):
         self,
         query: str = "",
         num_results: int = 5,
+        engine: str = "auto",
         **kw: Any,
     ) -> dict[str, Any]:
 
         if not query:
+            query = str(
+                kw.get("topic")
+                or kw.get("search")
+                or kw.get("subject")
+                or kw.get("question")
+                or ""
+            ).strip()
+        if not query:
             raise ValueError("A 'query' is required")
 
-        results = self._simulate_search(query, num_results)
+        results, search_engine = self._search_web(query, num_results=num_results, engine=engine)
 
         return {
             "message": f"Found {len(results)} results for '{query}'",
             "query": query,
             "results": results,
-            "search_engine": "simulated",
-            "note": "Configure SEARCH_API_KEY for live search results",
+            "search_engine": search_engine,
+            "note": "Live web search used best-effort public search endpoints",
         }
+
+    def handle_find_information(
+        self,
+        query: str = "",
+        num_results: int = 5,
+        **kw: Any,
+    ) -> dict[str, Any]:
+        return self.handle_web_search(query=query, num_results=num_results, **kw)
 
     def handle_fetch_url(
         self,
@@ -240,13 +258,93 @@ class ResearchAgent(BaseAgent):
             "consensus": "strong" if agreement_ratio > 0.6 else "moderate" if agreement_ratio > 0.3 else "weak",
         }
 
+    def _search_web(self, query: str, num_results: int, engine: str = "auto") -> tuple[list[dict[str, str]], str]:
+        normalized = (engine or "auto").lower().strip()
+        if normalized not in {"auto", "", "google", "duckduckgo", "ddg"}:
+            normalized = "auto"
+
+        engines = ["google", "duckduckgo"] if normalized in {"auto", ""} else [normalized]
+        if "duckduckgo" in engines:
+            engines.append("google")
+        elif "google" in engines:
+            engines.append("duckduckgo")
+
+        for candidate in engines:
+            try:
+                if candidate == "google":
+                    results = self._search_google(query, num_results)
+                else:
+                    results = self._search_duckduckgo(query, num_results)
+                if results:
+                    return results, candidate
+            except Exception as exc:
+                logger.debug("Search engine %s failed for %r: %s", candidate, query, exc)
+
+        return self._simulate_search(query, num_results), "simulated"
+
+    def _search_google(self, query: str, num_results: int) -> list[dict[str, str]]:
+        import httpx
+
+        url = f"https://www.google.com/search?hl=en&gl=us&num={max(1, num_results)}&q={quote_plus(query)}"
+        headers = {
+            "User-Agent": "Mozilla/5.0 (compatible; Limbi/1.0; +https://github.com/sayon999-d/Limbi-)",
+            "Accept-Language": "en-US,en;q=0.9",
+        }
+        with httpx.Client(timeout=15, follow_redirects=True) as client:
+            resp = client.get(url, headers=headers)
+            resp.raise_for_status()
+            html = resp.text
+
+        results: list[dict[str, str]] = []
+        seen: set[str] = set()
+        for match in re.finditer(r'<a[^>]+href="/url\?q=([^"&]+)[^"]*"[^>]*>(.*?)</a>', html, re.I | re.S):
+            url = match.group(1).split("&")[0]
+            title = re.sub(r"<[^>]+>", "", match.group(2)).strip()
+            if not title or not url or url in seen:
+                continue
+            seen.add(url)
+            results.append({"title": title, "url": url, "snippet": ""})
+            if len(results) >= num_results:
+                break
+        return results
+
+    def _search_duckduckgo(self, query: str, num_results: int) -> list[dict[str, str]]:
+        import httpx
+
+        url = f"https://html.duckduckgo.com/html/?q={quote_plus(query)}"
+        headers = {
+            "User-Agent": "Mozilla/5.0 (compatible; Limbi/1.0; +https://github.com/sayon999-d/Limbi-)",
+        }
+        with httpx.Client(timeout=15, follow_redirects=True) as client:
+            resp = client.get(url, headers=headers)
+            resp.raise_for_status()
+            html = resp.text
+
+        results: list[dict[str, str]] = []
+        for match in re.finditer(
+            r'<a[^>]+class="result__a"[^>]+href="([^"]+)"[^>]*>(.*?)</a>.*?'
+            r'(?:<a[^>]+class="result__snippet"[^>]*>(.*?)</a>)?',
+            html,
+            re.I | re.S,
+        ):
+            url = re.sub(r"&amp;", "&", match.group(1)).strip()
+            title = re.sub(r"<[^>]+>", "", match.group(2)).strip()
+            snippet_html = match.group(3) or ""
+            snippet = re.sub(r"<[^>]+>", "", snippet_html).strip()
+            if not title or not url:
+                continue
+            results.append({"title": title, "url": url, "snippet": snippet})
+            if len(results) >= num_results:
+                break
+        return results
+
     def _simulate_search(self, query: str, num_results: int) -> list[dict[str, str]]:
 
         return [
             {
                 "title": f"Result {i+1}: {query}",
                 "url": f"https://example.com/search/{query.replace(' ', '-')}/{i+1}",
-                "snippet": f"Simulated search result {i+1} for '{query}'. Configure SEARCH_API_KEY for live results.",
+                "snippet": f"Simulated search result {i+1} for '{query}'.",
             }
             for i in range(num_results)
         ]

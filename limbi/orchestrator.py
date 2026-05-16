@@ -52,6 +52,8 @@ You can BOTH:
 - Use only exact agent names that appear in the registry above.
 - Do not invent new agent names or generic placeholders.
 - If you need a learning-related capability, use `learning_agent`.
+- For `learning_agent`, use `get_best_action`, `get_insights`, `get_q_table`, or `record_feedback`.
+- For `research_agent`, use `web_search`, `fetch_url`, `summarize`, `fact_check`, or `compare_sources`.
 - If a requested capability is not registered, say so plainly and suggest the closest existing agent.
 - When listing required or optional agents, keep the list limited to real registered agents only.
 

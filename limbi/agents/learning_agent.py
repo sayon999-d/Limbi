@@ -83,9 +83,14 @@ class LearningAgent(BaseAgent):
         available_actions: list[str] | None = None,
         **kw: Any,
     ) -> dict[str, Any]:
-
         if not state:
-            raise ValueError("A 'state' (query category) is required")
+            state = str(
+                kw.get("query_category")
+                or kw.get("category")
+                or kw.get("topic")
+                or kw.get("current_goal")
+                or "general"
+            ).strip() or "general"
 
         import random
 
@@ -128,6 +133,10 @@ class LearningAgent(BaseAgent):
             "mode": "no_data",
             "message": "No Q-values learned for this state yet",
         }
+
+    def handle_teach(self, state: str = "", **kw: Any) -> dict[str, Any]:
+
+        return self.handle_get_insights()
 
     def handle_record_feedback(
         self,
