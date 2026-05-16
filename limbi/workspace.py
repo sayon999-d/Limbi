@@ -15,7 +15,7 @@ API_KEYS_CONFIG_KEY = "provider_api_keys"
 CUSTOM_SKILLS_CONFIG_KEY = "custom_skills"
 
 _DEFAULT_CONFIG = {
-    "version": "1.5.6",
+    "version": "1.5.7",
     "created_at": "",
     "provider": "ollama",
     "model": "llama3.2:3b",

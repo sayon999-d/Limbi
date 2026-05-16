@@ -6,7 +6,7 @@ import hashlib
 import logging
 import re
 import time
-from urllib.parse import quote_plus
+from urllib.parse import parse_qs, quote_plus, unquote
 from typing import Any
 from urllib.parse import urlparse
 
@@ -28,6 +28,19 @@ def _normalize_search_path(value: str) -> str:
     if normalized in {"duckduckgo", "duckduckgo.com", "ddg", "www.duckduckgo.com", "https://duckduckgo.com", "https://www.duckduckgo.com"}:
         return "duckduckgo"
     return "auto"
+
+
+def _normalize_target_url(url: str) -> str:
+    cleaned = (url or "").strip()
+    if cleaned.startswith("//"):
+        cleaned = f"https:{cleaned}"
+    parsed = urlparse(cleaned)
+    if parsed.netloc.endswith("duckduckgo.com") and parsed.path.startswith("/l/"):
+        query = parse_qs(parsed.query)
+        target = query.get("uddg", [""])[0]
+        if target:
+            cleaned = unquote(target)
+    return cleaned
 
 class ResearchAgent(BaseAgent):
 
@@ -103,6 +116,7 @@ class ResearchAgent(BaseAgent):
         if not url:
             raise ValueError("A 'url' is required")
 
+        url = _normalize_target_url(url)
         parsed = urlparse(url)
         if not parsed.scheme or not parsed.netloc:
             raise ValueError(f"Invalid URL: {url}")
@@ -351,7 +365,7 @@ class ResearchAgent(BaseAgent):
             html,
             re.I | re.S,
         ):
-            url = re.sub(r"&amp;", "&", match.group(1)).strip()
+            url = _normalize_target_url(re.sub(r"&amp;", "&", match.group(1)).strip())
             title = re.sub(r"<[^>]+>", "", match.group(2)).strip()
             snippet_html = match.group(3) or ""
             snippet = re.sub(r"<[^>]+>", "", snippet_html).strip()
