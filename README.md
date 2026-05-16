@@ -15,7 +15,7 @@
 
 Limbi is an omni-agent orchestration platform for running many specialized AI agents from one command, one Python API, or one MCP-compatible editor workflow.
 
-Current package version: `1.5.5`
+Current package version: `1.5.6`
 
 ## Recent Updates
 
@@ -33,7 +33,12 @@ What was added:
 - A safer skill runner that borrows the chosen runtime for the task and then restores the
   original shell selection.
 - Better source-grounded URL research for prompts that include links.
-- Shared session memory that persists the current goal and context across turns.
+- Direct internet research for prompts without URLs, with live Google or DuckDuckGo search
+  paths selected automatically from the prompt.
+- Graph-backed shared session memory that links related turns, agent results, and follow-up
+  work across the session.
+- Research answer repair so Limbi can rewrite accidental internal registry dumps into a
+  topic-based answer when the prompt was meant to be research.
 - Adaptive runtime budgeting so simple tasks stay light and harder tasks get more room.
 
 What changed:
@@ -42,6 +47,12 @@ What changed:
 - Manual provider and model selection stays available, but the default flow is less noisy.
 - API keys are reused from workspace storage instead of being re-entered every time.
 - Custom skills can be created, updated, listed, and removed from inside the terminal.
+- Internet research now chooses a visible search path, then fetches and summarizes the top
+  pages before answering.
+- Session memory is no longer only linear. Limbi now uses graph-linked context so related
+  work is easier to recall and share across agents.
+- Research prompts are filtered so Limbi answers the topic instead of dumping internal
+  agent registry text.
 - The release flow has been kept explicit so version bumps stay predictable.
 
 In short: Limbi now tries harder to stay useful across longer sessions, not just within
@@ -825,12 +836,24 @@ If multiple URLs are present, Limbi also compares the source summaries so it can
 
 If a page is heavily JavaScript-rendered or blocks simple HTTP fetching, Limbi may return a partial summary or a fetch error instead of inventing details.
 
+If your prompt asks for research without a URL, Limbi now performs a live web search first.
+It picks a search path when it can infer one from the prompt:
+
+- Google-style prompts use `www.google.com`
+- DuckDuckGo-style prompts use `www.duckduckgo.com`
+- Other research prompts fall back to auto mode and try Google, then DuckDuckGo
+
+After the search, Limbi fetches the top pages, summarizes them, and grounds the response in
+those results instead of in Limbi's internal agent registry.
+
 ## Session Memory And Adaptive Runtime
 
 Limbi keeps a live session memory while it is running:
 
 - Every user prompt and assistant response is written into the workspace memory stores.
 - Shared session state is kept in `context_memory.db` so other agents can read the current goal, recent focus, and conversation summary.
+- Related turns and results are linked as graph nodes and edges so recall is more relevant
+  than a flat replay of the session.
 - The same session memory stays available if you switch provider or model during the run.
 - Limbi also stores the conversation summary so later turns can stay grounded in earlier work.
 
@@ -1014,28 +1037,6 @@ TWINE_PASSWORD=${{ secrets.PYPI_API_TOKEN }}
 ```
 
 Keep bumping the package version before each release, because PyPI will reject any file name that already exists.
-
-### Release Command
-
-```bash
-# 1. Push the pending commit first
-git push origin main
-
-# 2. Bump version to 1.5.5
-sed -i '' 's/1.5.5/1.5.5/g' pyproject.toml setup.py limbi/__init__.py limbi/cli.py limbi/workspace.py README.md
-
-# 3. Commit the version bump
-git add -A && git commit -m "v1.5.5: custom skills and live progress updates" && git push origin main
-
-# 4. Clean, build, check, publish
-rm -rf dist/ build/ limbi.egg-info/
-python -m build
-python -m twine check dist/*
-python -m twine upload dist/*
-
-# 5. Upgrade locally to verify
-python -m pip install --upgrade limbi
-```
 
 ### `chromadb not installed`
 

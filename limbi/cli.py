@@ -204,7 +204,7 @@ def _print_banner(console):
 
     banner = Text()
     banner.append("Limbi", style="bold orange1")
-    banner.append(" v1.5.5", style="bold white")
+    banner.append(" v1.5.6", style="bold white")
     banner.append(" - Omni-Agent Orchestrator\n")
     banner.append("Type your prompt, or ", style="white")
     banner.append("/models", style="bold orange1")
@@ -1474,7 +1474,7 @@ Type a natural-language prompt to talk to Limbi.
     default=False,
     help="Skip workspace trust prompt (for CI/automation).",
 )
-@click.version_option(version="1.5.5", prog_name="limbi")
+@click.version_option(version="1.5.6", prog_name="limbi")
 def main(
     prompt: str | None,
     provider: str | None,

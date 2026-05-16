@@ -4,6 +4,7 @@ import hashlib
 import json
 import logging
 import os
+import re
 import sqlite3
 import threading
 import time
@@ -20,6 +21,25 @@ _lock = threading.Lock()
 
 _hot_cache: dict[str, list[dict[str, Any]]] = {}   
 _agent_subscriptions: dict[str, set[str]] = {}       
+
+_GRAPH_EDGE_BONUS = 0.12
+_GRAPH_RECENCY_BONUS = 0.08
+_GRAPH_QUERY_BONUS = 0.22
+
+
+def _normalize_graph_tokens(text: str) -> set[str]:
+    return {
+        token
+        for token in re.findall(r"[a-z0-9_]+", (text or "").lower())
+        if len(token) > 2
+    }
+
+
+def _parse_timestamp(value: str) -> float:
+    try:
+        return time.mktime(time.strptime(value, "%Y-%m-%dT%H:%M:%SZ"))
+    except Exception:
+        return time.time()
 
 
 def _serialize_state_value(value: Any) -> str:
@@ -74,6 +94,29 @@ def _init_context_db() -> None:
                 consumed        INTEGER DEFAULT 0
             );
 
+            CREATE TABLE IF NOT EXISTS context_graph_nodes (
+                node_id         TEXT PRIMARY KEY,
+                session_id      TEXT NOT NULL,
+                entry_id        TEXT NOT NULL UNIQUE,
+                source_agent    TEXT NOT NULL,
+                node_type       TEXT NOT NULL,
+                content         TEXT NOT NULL,
+                tags            TEXT DEFAULT '[]',
+                metadata        TEXT DEFAULT '{}',
+                created_at      TEXT NOT NULL,
+                importance      REAL DEFAULT 0.5
+            );
+
+            CREATE TABLE IF NOT EXISTS context_graph_edges (
+                id              TEXT PRIMARY KEY,
+                session_id      TEXT NOT NULL,
+                from_node_id    TEXT NOT NULL,
+                to_node_id      TEXT NOT NULL,
+                relation        TEXT NOT NULL,
+                weight          REAL DEFAULT 0.5,
+                created_at      TEXT NOT NULL
+            );
+
             CREATE TABLE IF NOT EXISTS session_state (
                 session_id      TEXT NOT NULL,
                 key             TEXT NOT NULL,
@@ -89,6 +132,11 @@ def _init_context_db() -> None:
             CREATE INDEX IF NOT EXISTS idx_handoff_session ON agent_handoffs(session_id);
             CREATE INDEX IF NOT EXISTS idx_handoff_to ON agent_handoffs(to_agent);
             CREATE INDEX IF NOT EXISTS idx_state_session ON session_state(session_id);
+            CREATE INDEX IF NOT EXISTS idx_graph_nodes_session ON context_graph_nodes(session_id);
+            CREATE INDEX IF NOT EXISTS idx_graph_nodes_source ON context_graph_nodes(source_agent);
+            CREATE INDEX IF NOT EXISTS idx_graph_edges_session ON context_graph_edges(session_id);
+            CREATE INDEX IF NOT EXISTS idx_graph_edges_from ON context_graph_edges(from_node_id);
+            CREATE INDEX IF NOT EXISTS idx_graph_edges_to ON context_graph_edges(to_node_id);
         """)
         conn.commit()
         conn.close()
@@ -147,7 +195,38 @@ def publish_agent_result(
             ),
         )
 
-       
+        conn.execute(
+            """INSERT INTO context_graph_nodes
+               (node_id, session_id, entry_id, source_agent, node_type,
+                content, tags, metadata, created_at, importance)
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+            (
+                f"node_{entry_id}",
+                session_id,
+                entry_id,
+                source_agent,
+                "agent_result",
+                summary,
+                json.dumps(entry["tags"]),
+                json.dumps(entry["metadata"]),
+                now,
+                0.7 if not success else 0.5,
+            ),
+        )
+
+        _record_graph_context(
+            conn,
+            session_id=session_id,
+            entry_id=entry_id,
+            source_agent=source_agent,
+            entry_type="result",
+            content=summary,
+            tags=entry["tags"],
+            metadata=entry["metadata"],
+            priority=entry["priority"],
+            created_at=now,
+        )
+
         conn.execute(
             """INSERT INTO agent_handoffs
                (id, session_id, from_agent, to_agent, action_taken,
@@ -226,6 +305,205 @@ def get_shared_state_value(session_id: str, key: str = "") -> dict[str, Any]:
         return {"state": state, "session_id": session_id}
 
 
+def _upsert_graph_node(
+    conn: sqlite3.Connection,
+    *,
+    session_id: str,
+    entry_id: str,
+    source_agent: str,
+    node_type: str,
+    content: str,
+    tags: list[str],
+    metadata: dict[str, Any],
+    importance: float,
+    created_at: str,
+) -> None:
+    conn.execute(
+        """INSERT INTO context_graph_nodes
+           (node_id, session_id, entry_id, source_agent, node_type,
+            content, tags, metadata, created_at, importance)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+        (
+            f"node_{entry_id}",
+            session_id,
+            entry_id,
+            source_agent,
+            node_type,
+            content,
+            json.dumps(tags),
+            json.dumps(metadata),
+            created_at,
+            importance,
+        ),
+    )
+
+
+def _link_graph_node(
+    conn: sqlite3.Connection,
+    *,
+    session_id: str,
+    from_node_id: str,
+    to_node_id: str,
+    relation: str,
+    weight: float,
+    created_at: str,
+) -> None:
+    conn.execute(
+        """INSERT INTO context_graph_edges
+           (id, session_id, from_node_id, to_node_id, relation, weight, created_at)
+           VALUES (?, ?, ?, ?, ?, ?, ?)""",
+        (
+            f"edge_{uuid.uuid4().hex[:12]}",
+            session_id,
+            from_node_id,
+            to_node_id,
+            relation,
+            weight,
+            created_at,
+        ),
+    )
+
+
+def _record_graph_context(
+    conn: sqlite3.Connection,
+    *,
+    session_id: str,
+    entry_id: str,
+    source_agent: str,
+    entry_type: str,
+    content: str,
+    tags: list[str],
+    metadata: dict[str, Any],
+    priority: str,
+    created_at: str,
+) -> None:
+    node_id = f"node_{entry_id}"
+    importance = 0.7 if priority == "high" else 0.5
+    _upsert_graph_node(
+        conn,
+        session_id=session_id,
+        entry_id=entry_id,
+        source_agent=source_agent,
+        node_type=entry_type,
+        content=content,
+        tags=tags,
+        metadata=metadata,
+        importance=importance,
+        created_at=created_at,
+    )
+
+    prev_rows = conn.execute(
+        """SELECT id, source_agent, tags, content
+           FROM context_entries
+           WHERE session_id = ? AND id != ?
+           ORDER BY created_at DESC
+           LIMIT 5""",
+        (session_id, entry_id),
+    ).fetchall()
+    content_tokens = _normalize_graph_tokens(content)
+    for row in prev_rows:
+        prev_node_id = f"node_{row['id']}"
+        prev_tags = set(json.loads(row["tags"] or "[]"))
+        overlap = len(set(tags) & prev_tags)
+        token_overlap = len(content_tokens & _normalize_graph_tokens(row["content"]))
+        relation = "sequential"
+        weight = 0.25 + (overlap * 0.12) + (token_overlap * 0.03)
+        if row["source_agent"] == source_agent:
+            relation = "same_agent"
+            weight += 0.08
+        elif overlap:
+            relation = "shared_tags"
+        if token_overlap > 4:
+            relation = "semantic_overlap"
+            weight += 0.08
+        _link_graph_node(
+            conn,
+            session_id=session_id,
+            from_node_id=node_id,
+            to_node_id=prev_node_id,
+            relation=relation,
+            weight=round(min(1.0, weight), 3),
+            created_at=created_at,
+        )
+
+
+def _graph_recall_context(
+    session_id: str,
+    query: str = "",
+    limit: int = 12,
+    for_agent: str = "",
+    include_state: bool = True,
+) -> list[dict[str, Any]]:
+    query_terms = _normalize_graph_tokens(query)
+    if include_state:
+        state = get_shared_state_value(session_id).get("state", {})
+        query_terms |= _normalize_graph_tokens(
+            " ".join(
+                str(state.get(key) or "")
+                for key in ("current_goal", "current_focus", "last_response_summary")
+            )
+        )
+
+    with _lock:
+        conn = _get_conn()
+        rows = conn.execute(
+            """SELECT n.*, COUNT(e.id) AS degree
+               FROM context_graph_nodes n
+               LEFT JOIN context_graph_edges e
+               ON e.from_node_id = n.node_id OR e.to_node_id = n.node_id
+               WHERE n.session_id = ?
+               GROUP BY n.node_id
+               ORDER BY n.created_at DESC
+               LIMIT 80""",
+            (session_id,),
+        ).fetchall()
+        conn.close()
+
+    scored: list[tuple[float, sqlite3.Row]] = []
+    for row in rows:
+        content = str(row["content"] or "")
+        tags = set(json.loads(row["tags"] or "[]"))
+        metadata = json.loads(row["metadata"] or "{}")
+        tokens = _normalize_graph_tokens(content) | {str(row["source_agent"] or "").lower()} | tags
+        overlap = len(query_terms & tokens)
+        recency_score = max(0.0, 1.0 - min((time.time() - _parse_timestamp(row["created_at"])) / 3600.0, 1.0))
+        degree = int(row["degree"] or 0)
+        score = (
+            overlap * 1.8
+            + min(2.0, degree * _GRAPH_EDGE_BONUS)
+            + recency_score * _GRAPH_RECENCY_BONUS
+            + float(row["importance"] or 0.0)
+        )
+        if for_agent and for_agent in tags:
+            score += 0.35
+        if metadata.get("current_goal"):
+            score += 0.05
+        if overlap:
+            score += _GRAPH_QUERY_BONUS
+        scored.append((score, row))
+
+    scored.sort(key=lambda item: item[0], reverse=True)
+    selected = scored[:limit]
+
+    entries: list[dict[str, Any]] = []
+    for score, row in selected:
+        entries.append(
+            {
+                "id": row["entry_id"],
+                "source_agent": row["source_agent"],
+                "entry_type": row["node_type"],
+                "content": row["content"],
+                "tags": json.loads(row["tags"] or "[]"),
+                "priority": "high" if float(row["importance"] or 0.0) >= 0.7 else "normal",
+                "created_at": row["created_at"],
+                "graph_score": round(score, 3),
+                "degree": int(row["degree"] or 0),
+                "accessed_count": 1,
+            }
+        )
+    return entries
+
+
 def record_session_turn(
     session_id: str,
     role: str,
@@ -279,9 +557,21 @@ def record_session_turn(
     return entry_id
 
 
-def get_session_context(session_id: str = "global", for_agent: str = "") -> str:
-
-    entries = _hot_cache.get(session_id, [])
+def get_session_context(
+    session_id: str = "global",
+    for_agent: str = "",
+    query: str = "",
+    include_state: bool = True,
+) -> str:
+    entries = _graph_recall_context(
+        session_id,
+        query=query,
+        limit=12,
+        for_agent=for_agent,
+        include_state=include_state,
+    )
+    if not entries:
+        entries = _hot_cache.get(session_id, [])
     if not entries:
         
         with _lock:
@@ -327,7 +617,11 @@ def get_session_context(session_id: str = "global", for_agent: str = "") -> str:
         content = e.get("content", "")
         priority = e.get("priority", "normal")
         marker = "high" if priority == "high" else "normal"
-        lines.append(f"- [{marker}] **{source}**: {content}")
+        score = e.get("graph_score")
+        prefix = f"- [{marker}] **{source}**"
+        if score is not None:
+            prefix += f" [score: {score}]"
+        lines.append(f"{prefix}: {content}")
 
     return "\n".join(lines)
 
@@ -345,6 +639,8 @@ class ContextMemoryAgent(BaseAgent):
             ctx_count = conn.execute("SELECT COUNT(*) FROM context_entries").fetchone()[0]
             handoff_count = conn.execute("SELECT COUNT(*) FROM agent_handoffs").fetchone()[0]
             state_keys = conn.execute("SELECT COUNT(*) FROM session_state").fetchone()[0]
+            node_count = conn.execute("SELECT COUNT(*) FROM context_graph_nodes").fetchone()[0]
+            edge_count = conn.execute("SELECT COUNT(*) FROM context_graph_edges").fetchone()[0]
             conn.close()
 
         hot_entries = sum(len(v) for v in _hot_cache.values())
@@ -353,6 +649,8 @@ class ContextMemoryAgent(BaseAgent):
             "type": "inter_agent_memory",
             "status": "ready",
             "context_entries": ctx_count,
+            "graph_nodes": node_count,
+            "graph_edges": edge_count,
             "handoffs_recorded": handoff_count,
             "session_state_keys": state_keys,
             "hot_cache_entries": hot_entries,
@@ -422,6 +720,18 @@ class ContextMemoryAgent(BaseAgent):
                     json.dumps(tags), priority,
                     json.dumps(entry["metadata"]), now, expires,
                 ),
+            )
+            _record_graph_context(
+                conn,
+                session_id=session_id,
+                entry_id=entry_id,
+                source_agent=entry["source_agent"],
+                entry_type=entry_type,
+                content=content,
+                tags=tags,
+                metadata=entry["metadata"],
+                priority=priority,
+                created_at=now,
             )
             conn.commit()
             conn.close()

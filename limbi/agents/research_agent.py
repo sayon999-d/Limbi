@@ -15,6 +15,19 @@ from . import BaseAgent
 logger = logging.getLogger("limbi.agents.research")
 
 _url_cache: dict[str, dict[str, Any]] = {}
+_SEARCH_PATH_LABELS = {
+    "google": "www.google.com",
+    "duckduckgo": "www.duckduckgo.com",
+}
+
+
+def _normalize_search_path(value: str) -> str:
+    normalized = (value or "auto").strip().lower()
+    if normalized in {"google", "google.com", "www.google.com", "https://google.com", "https://www.google.com"}:
+        return "google"
+    if normalized in {"duckduckgo", "duckduckgo.com", "ddg", "www.duckduckgo.com", "https://duckduckgo.com", "https://www.duckduckgo.com"}:
+        return "duckduckgo"
+    return "auto"
 
 class ResearchAgent(BaseAgent):
 
@@ -51,14 +64,25 @@ class ResearchAgent(BaseAgent):
         if not query:
             raise ValueError("A 'query' is required")
 
-        results, search_engine = self._search_web(query, num_results=num_results, engine=engine)
+        search_path = str(
+            kw.get("search_path")
+            or kw.get("search_engine")
+            or engine
+            or "auto"
+        )
+        results, search_engine, resolved_path = self._search_web(
+            query,
+            num_results=num_results,
+            engine=search_path,
+        )
 
         return {
             "message": f"Found {len(results)} results for '{query}'",
             "query": query,
             "results": results,
             "search_engine": search_engine,
-            "note": "Live web search used best-effort public search endpoints",
+            "search_path": resolved_path,
+            "note": f"Live web search used best-effort public search endpoints via {resolved_path}",
         }
 
     def handle_find_information(
@@ -258,9 +282,9 @@ class ResearchAgent(BaseAgent):
             "consensus": "strong" if agreement_ratio > 0.6 else "moderate" if agreement_ratio > 0.3 else "weak",
         }
 
-    def _search_web(self, query: str, num_results: int, engine: str = "auto") -> tuple[list[dict[str, str]], str]:
-        normalized = (engine or "auto").lower().strip()
-        if normalized not in {"auto", "", "google", "duckduckgo", "ddg"}:
+    def _search_web(self, query: str, num_results: int, engine: str = "auto") -> tuple[list[dict[str, str]], str, str]:
+        normalized = _normalize_search_path(engine)
+        if normalized not in {"auto", "google", "duckduckgo"}:
             normalized = "auto"
 
         engines = ["google", "duckduckgo"] if normalized in {"auto", ""} else [normalized]
@@ -276,11 +300,11 @@ class ResearchAgent(BaseAgent):
                 else:
                     results = self._search_duckduckgo(query, num_results)
                 if results:
-                    return results, candidate
+                    return results, candidate, _SEARCH_PATH_LABELS.get(candidate, candidate)
             except Exception as exc:
                 logger.debug("Search engine %s failed for %r: %s", candidate, query, exc)
 
-        return self._simulate_search(query, num_results), "simulated"
+        return self._simulate_search(query, num_results), "simulated", "simulated"
 
     def _search_google(self, query: str, num_results: int) -> list[dict[str, str]]:
         import httpx

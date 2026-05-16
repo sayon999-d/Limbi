@@ -224,6 +224,15 @@ def _extract_research_query(user_message: str) -> str:
     return text or user_message.strip()
 
 
+def _choose_web_search_path(user_message: str) -> str:
+    text = user_message.lower()
+    if any(token in text for token in ("duckduckgo", "ddg", "www.duckduckgo.com", "duckduckgo.com")):
+        return "duckduckgo"
+    if any(token in text for token in ("google.com", "www.google.com", "google search", "search google", "google")):
+        return "google"
+    return "auto"
+
+
 def _emit_progress(
     progress_callback: Callable[[str], None] | None,
     message: str,
@@ -267,6 +276,20 @@ def _looks_like_delegation_only(text: str) -> bool:
     if any(marker in normalized for marker in markers):
         return True
     return len(normalized.split()) < 45
+
+
+def _looks_like_internal_agent_dump(text: str) -> bool:
+    normalized = (text or "").lower()
+    markers = (
+        "registered agent names",
+        "agent registry",
+        "available agents & actions",
+        "here are some additional details",
+        "use only exact agent names",
+        "context_memory_agent",
+        "mutation_agent",
+    )
+    return any(marker in normalized for marker in markers)
 
 
 def _summarize_delegation_results(
@@ -625,6 +648,7 @@ class Orchestrator:
             return ""
 
         query = _extract_research_query(user_message)
+        search_path = _choose_web_search_path(user_message)
         try:
             research_agent = get_agent("research_agent")
         except KeyError:
@@ -638,7 +662,8 @@ class Orchestrator:
                 {
                     "query": query,
                     "num_results": 4,
-                    "engine": "auto",
+                    "engine": search_path,
+                    "search_path": search_path,
                 },
             )
         except Exception as exc:
@@ -657,6 +682,7 @@ class Orchestrator:
             "### Search Query",
             f"- Query: {query}",
             f"- Search engine: {data.get('search_engine', 'unknown')}",
+            f"- Search path: {data.get('search_path', 'unknown')}",
             "",
             "### Top Results",
         ]
@@ -674,11 +700,113 @@ class Orchestrator:
             if url:
                 line += f" ({url})"
             blocks.append(line)
+        top_urls = [
+            str(item.get("url") or "").strip()
+            for item in results[:2]
+            if isinstance(item, dict) and str(item.get("url") or "").strip()
+        ]
+        if top_urls and research_agent is not None:
+            _emit_progress(progress_callback, "Fetching research pages")
+            fetched_pages: list[dict[str, Any]] = []
+            for url in top_urls:
+                try:
+                    fetch_result = await asyncio.to_thread(
+                        research_agent.execute,
+                        "fetch_url",
+                        {"url": url, "extract_text": True},
+                    )
+                except Exception as exc:
+                    logger.debug("Research fetch failed for %s: %s", url, exc)
+                    continue
+                if not fetch_result.success:
+                    continue
+                data = fetch_result.data or {}
+                page_text = str(data.get("content") or "")
+                summary_text = ""
+                if page_text:
+                    try:
+                        summary_result = await asyncio.to_thread(
+                            research_agent.execute,
+                            "summarize",
+                            {
+                                "text": page_text[:6000],
+                                "max_points": 4,
+                                "style": "bullet",
+                            },
+                        )
+                        if summary_result.success:
+                            summary_text = str((summary_result.data or {}).get("summary") or "").strip()
+                    except Exception as exc:
+                        logger.debug("Research summary failed for %s: %s", url, exc)
+                if not summary_text:
+                    summary_text = page_text[:1200].strip()
+                fetched_pages.append(
+                    {
+                        "url": url,
+                        "summary": summary_text,
+                    }
+                )
+
+            if fetched_pages:
+                blocks.append("")
+                blocks.append("### Fetched Pages")
+                for page in fetched_pages:
+                    blocks.append(f"- {page['url']}")
+                    if page.get("summary"):
+                        blocks.append(f"  - Summary: {page['summary']}")
+
         blocks.append("")
         blocks.append("### Guidance")
-        blocks.append("- Use the search results above as the evidence base.")
-        blocks.append("- If the question needs deeper verification, fetch the best URLs next.")
+        blocks.append("- Use the search results and fetched pages above as the evidence base.")
+        blocks.append("- Answer the topic directly and do not repeat Limbi's internal agent list.")
         return "\n".join(blocks).strip()
+
+    async def _repair_research_answer(
+        self,
+        user_message: str,
+        current_answer: str,
+        *,
+        url_research_context: str = "",
+        web_research_context: str = "",
+    ) -> str:
+        research_blocks = [
+            block
+            for block in (url_research_context.strip(), web_research_context.strip())
+            if block
+        ]
+        if not research_blocks:
+            return ""
+
+        try:
+            repair_llm = self._ensure_llm(
+                max_tokens=min(self._provider.config.max_tokens, 384),
+                temperature=0.0,
+            )
+            research_text = "\n\n".join(research_blocks)
+            repair_messages = [
+                SystemMessage(
+                    content=(
+                        "You rewrite research answers. Use only the supplied research context. "
+                        "Do not mention Limbi internals, the agent registry, shared memory, or "
+                        "tool logs. Answer the user's topic directly and concisely."
+                    )
+                ),
+                HumanMessage(
+                    content=(
+                        f"User question:\n{user_message}\n\n"
+                        f"Research context:\n{research_text}\n\n"
+                        f"Bad draft to replace:\n{current_answer}\n\n"
+                        "Write the corrected final answer now."
+                    )
+                ),
+            ]
+            response = await asyncio.to_thread(repair_llm.invoke, repair_messages)
+            repaired = str(getattr(response, "content", "") or "").strip()
+            if repaired and not _looks_like_internal_agent_dump(repaired):
+                return repaired
+        except Exception as exc:
+            logger.debug("Research answer repair failed: %s", exc)
+        return ""
 
     async def chat(
         self,
@@ -735,7 +863,10 @@ class Orchestrator:
             },
         )
 
+        research_mode = _looks_like_web_research_prompt(user_message)
         rag_context = self._vector_store.get_context_string(user_message)
+        if research_mode:
+            rag_context = ""
         if rag_context:
             _emit_progress(progress_callback, "Gathering workspace context")
         url_research_context = await self._build_url_research_context(
@@ -748,8 +879,12 @@ class Orchestrator:
         )
         _emit_progress(progress_callback, "Calculating runtime budget")
         agent_registry = _build_agent_registry_text()
-        recent_execs = _build_recent_executions_text()
-        shared_ctx = get_session_context(self._session_id)
+        recent_execs = "" if research_mode else _build_recent_executions_text()
+        shared_ctx = get_session_context(
+            self._session_id,
+            query=user_message,
+            include_state=not research_mode,
+        )
         task_profile = _estimate_task_complexity(
             user_message,
             rag_context=rag_context,
@@ -840,6 +975,16 @@ class Orchestrator:
             parsed.conversation_text = (
                 f"{parsed.conversation_text}\n\n**Final Answer**\n{synthesized}"
             ).strip()
+        if research_mode and _looks_like_internal_agent_dump(parsed.conversation_text):
+            _emit_progress(progress_callback, "Rewriting research answer")
+            repaired = await self._repair_research_answer(
+                user_message,
+                parsed.conversation_text,
+                url_research_context=url_research_context,
+                web_research_context=web_research_context,
+            )
+            if repaired:
+                parsed.conversation_text = repaired
         _emit_progress(progress_callback, "Finalizing response")
 
         self._record_turn(
@@ -942,7 +1087,10 @@ class Orchestrator:
             },
         )
 
+        research_mode = _looks_like_web_research_prompt(user_message)
         rag_context = self._vector_store.get_context_string(user_message)
+        if research_mode:
+            rag_context = ""
         if rag_context:
             _emit_progress(progress_callback, "Gathering workspace context")
         url_research_context = await self._build_url_research_context(
@@ -955,8 +1103,12 @@ class Orchestrator:
         )
         _emit_progress(progress_callback, "Calculating runtime budget")
         agent_registry = _build_agent_registry_text()
-        recent_execs = _build_recent_executions_text()
-        shared_ctx = get_session_context(self._session_id)
+        recent_execs = "" if research_mode else _build_recent_executions_text()
+        shared_ctx = get_session_context(
+            self._session_id,
+            query=user_message,
+            include_state=not research_mode,
+        )
         task_profile = _estimate_task_complexity(
             user_message,
             rag_context=rag_context,
@@ -1033,6 +1185,16 @@ class Orchestrator:
             parsed.conversation_text = (
                 f"{parsed.conversation_text}\n\n**Final Answer**\n{synthesized}"
             ).strip()
+        if research_mode and _looks_like_internal_agent_dump(parsed.conversation_text):
+            _emit_progress(progress_callback, "Rewriting research answer")
+            repaired = await self._repair_research_answer(
+                user_message,
+                parsed.conversation_text,
+                url_research_context=url_research_context,
+                web_research_context=web_research_context,
+            )
+            if repaired:
+                parsed.conversation_text = repaired
         _emit_progress(progress_callback, "Finalizing response")
 
         self._record_turn(
