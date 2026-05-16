@@ -8,7 +8,7 @@ import sys
 import time
 import uuid
 from pathlib import Path
-from typing import Any
+from typing import Any, Callable
 
 import click
 from limbi.llm_provider import list_available_models, provider_requires_api_key
@@ -204,10 +204,12 @@ def _print_banner(console):
 
     banner = Text()
     banner.append("Limbi", style="bold orange1")
-    banner.append(" v1.5.3", style="bold white")
+    banner.append(" v1.5.4", style="bold white")
     banner.append(" - Omni-Agent Orchestrator\n")
     banner.append("Type your prompt, or ", style="white")
     banner.append("/models", style="bold orange1")
+    banner.append(", ", style="white")
+    banner.append("/skills", style="bold orange1")
     banner.append(", ", style="white")
     banner.append("/agent", style="bold orange1")
     banner.append(", or ", style="white")
@@ -730,6 +732,304 @@ def _manage_provider_keys(state: dict[str, Any], console) -> None:
             return
 
 
+def _normalize_custom_skill_name(name: str) -> str:
+    return str(name or "").strip().lower().replace(" ", "-")
+
+
+def _custom_skill_runtime_summary(skill: dict[str, Any], state: dict[str, Any]) -> str:
+    provider = str(skill.get("provider") or "").strip()
+    model = str(skill.get("model") or "").strip()
+    base_url = str(skill.get("base_url") or "").strip()
+    if not provider:
+        provider = str(state.get("provider") or "").strip() or "inherit"
+    if not model:
+        model = str(state.get("model") or "").strip() or "(current model)"
+    summary = provider
+    if model:
+        summary += f" / {model}"
+    if base_url:
+        summary += f" @ {base_url}"
+    elif not skill.get("provider"):
+        summary += " (inherits current runtime)"
+    return summary
+
+
+def _print_custom_skills(console, state: dict[str, Any]) -> None:
+    from rich.table import Table
+    from limbi.workspace import get_custom_skills
+
+    skills = get_custom_skills(state["ws_config"])
+    table = Table(
+        title="Saved Custom Skills",
+        border_style="orange1",
+        show_lines=False,
+        padding=(0, 1),
+    )
+    table.add_column("Skill", style="bold white", min_width=18)
+    table.add_column("Description", style="white", min_width=28)
+    table.add_column("Runtime", style="dim", min_width=32)
+
+    if not skills:
+        table.add_row("(none)", "No custom skills have been saved yet.", "Use /skills to add one.")
+        console.print(table)
+        return
+
+    for name, skill in sorted(skills.items()):
+        table.add_row(
+            name,
+            str(skill.get("description") or "").strip() or "(no description)",
+            _custom_skill_runtime_summary(skill, state),
+        )
+    console.print(table)
+
+
+def _choose_custom_skill_runtime(state: dict[str, Any], console, existing_skill: dict[str, Any] | None = None) -> dict[str, str]:
+    runtime_choices = [
+        {
+            "name": "__inherit__",
+            "label": "Inherit current runtime",
+            "details": "use the active provider, model, and endpoint when this skill runs",
+        }
+    ] + _provider_choice_items()
+    default_provider = str(existing_skill.get("provider") or state.get("provider") or "ollama") if existing_skill else str(state.get("provider") or "ollama")
+    default_index = 0
+    for idx, item in enumerate(runtime_choices):
+        if item["name"] == default_provider:
+            default_index = idx
+            break
+
+    selected = _select_from_menu(
+        console,
+        "Choose runtime for this custom skill",
+        runtime_choices,
+        default_index=default_index,
+        help_text="Use Up/Down to move, then Enter to choose.",
+    )
+
+    if selected["name"] == "__inherit__":
+        return {"provider": "", "model": "", "base_url": ""}
+
+    provider = selected["name"]
+    defaults = _PROVIDER_CHOICES.get(provider, {})
+    base_url = str(defaults.get("base_url") or "").strip()
+    if provider == "openai_compatible":
+        base_url = click.prompt(
+            "Custom base URL",
+            default=str(existing_skill.get("base_url") or state.get("base_url") or base_url or ""),
+            show_default=bool(existing_skill.get("base_url") or state.get("base_url") or base_url),
+            type=str,
+        ).strip()
+    model = click.prompt(
+        "Model for this skill",
+        default=str(existing_skill.get("model") or defaults.get("model") or state.get("model") or "llama3.2:3b"),
+        show_default=True,
+        type=str,
+    ).strip()
+    return {"provider": provider, "model": model, "base_url": base_url}
+
+
+def _delete_custom_skill(state: dict[str, Any], console, skill_name: str) -> None:
+    from limbi.workspace import delete_custom_skill, get_custom_skills, save_config
+
+    skill_key = _normalize_custom_skill_name(skill_name)
+    ws_config = dict(state["ws_config"])
+    skills = get_custom_skills(ws_config)
+    if skill_key not in skills:
+        console.print(f"[yellow]No saved custom skill named '{skill_key}'.[/]")
+        return
+    if not click.confirm(f"Delete custom skill '{skill_key}'?", default=False):
+        return
+    ws_config = delete_custom_skill(ws_config, skill_key)
+    save_config(ws_config)
+    state["ws_config"] = ws_config
+    console.print(f"[green]Deleted custom skill:[/] [bold]{skill_key}[/]")
+
+
+def _save_custom_skill(
+    state: dict[str, Any],
+    console,
+    name: str,
+    *,
+    existing_skill: dict[str, Any] | None = None,
+) -> None:
+    from limbi.workspace import get_custom_skill, save_config, set_custom_skill
+    from rich.panel import Panel
+
+    ws_config = dict(state["ws_config"])
+    existing = existing_skill or get_custom_skill(ws_config, name)
+
+    description = click.prompt(
+        "Short description",
+        default=str(existing.get("description") or ""),
+        show_default=bool(existing.get("description")),
+        type=str,
+    ).strip()
+    instruction = click.prompt(
+        "Skill instruction",
+        default=str(existing.get("instruction") or ""),
+        show_default=bool(existing.get("instruction")),
+        type=str,
+    ).strip()
+    runtime = _choose_custom_skill_runtime(state, console, existing_skill=existing)
+
+    ws_config = set_custom_skill(
+        ws_config,
+        name,
+        {
+            "description": description,
+            "instruction": instruction,
+            "provider": runtime.get("provider", ""),
+            "model": runtime.get("model", ""),
+            "base_url": runtime.get("base_url", ""),
+        },
+    )
+    save_config(ws_config)
+    state["ws_config"] = ws_config
+    saved = get_custom_skill(ws_config, name)
+    console.print(
+        Panel(
+            f"[green]Saved custom skill:[/] [bold]{saved.get('name', _normalize_custom_skill_name(name))}[/]\n"
+            f"[dim]Runtime:[/] { _custom_skill_runtime_summary(saved, state) }\n"
+            f"[dim]Instruction:[/] {saved.get('instruction', '')[:200]}",
+            border_style="orange1",
+            title="Custom Skill Saved",
+            padding=(1, 2),
+        )
+    )
+
+
+def _manage_custom_skills(state: dict[str, Any], console) -> None:
+    from limbi.workspace import get_custom_skill, get_custom_skills
+
+    while True:
+        _print_custom_skills(console, state)
+        actions = [
+            {"name": "create", "label": "Create skill", "details": "define a new reusable prompt skill"},
+            {"name": "update", "label": "Update skill", "details": "edit an existing saved skill"},
+            {"name": "delete", "label": "Delete skill", "details": "remove a saved skill"},
+            {"name": "back", "label": "Back", "details": "return to the terminal"},
+        ]
+        action_item = _select_from_menu(
+            console,
+            "Custom skills",
+            actions,
+            help_text="Use Up/Down to move, then Enter to choose.",
+        )
+        action = action_item["name"]
+        if action == "back":
+            return
+
+        ws_config = dict(state["ws_config"])
+        skills = get_custom_skills(ws_config)
+
+        if action == "delete":
+            if not skills:
+                console.print("[dim]No custom skills to delete.[/]")
+                continue
+            delete_item = _select_from_menu(
+                console,
+                "Delete which skill?",
+                [
+                    {"name": name, "label": name, "details": str(skill.get("description") or "").strip() or "(no description)"}
+                    for name, skill in sorted(skills.items())
+                ],
+                help_text="Use Up/Down to move, then Enter to choose.",
+            )
+            _delete_custom_skill(state, console, delete_item["name"])
+            if not click.confirm("Manage another custom skill?", default=False):
+                return
+            continue
+
+        if action == "update":
+            if not skills:
+                console.print("[dim]No custom skills to update yet.[/]")
+                continue
+            selected_skill = _select_from_menu(
+                console,
+                "Update which skill?",
+                [
+                    {"name": name, "label": name, "details": str(skill.get("description") or "").strip() or "(no description)"}
+                    for name, skill in sorted(skills.items())
+                ],
+                help_text="Use Up/Down to move, then Enter to choose.",
+            )
+            name = selected_skill["name"]
+            existing_skill = get_custom_skill(ws_config, name)
+        else:
+            name = click.prompt(
+            "Skill name (used as /skill-name)",
+            default="",
+            show_default=False,
+            type=str,
+            ).strip()
+            if not name:
+                raise click.ClickException("Skill name is required.")
+            existing_skill = get_custom_skill(ws_config, name)
+
+        _save_custom_skill(state, console, name, existing_skill=existing_skill)
+        if not click.confirm("Manage another custom skill?", default=False):
+            return
+
+
+def _run_custom_skill(state: dict[str, Any], console, skill_name: str, task_text: str | None = None) -> None:
+    from limbi.workspace import get_custom_skill
+
+    skill = get_custom_skill(state["ws_config"], skill_name)
+    if not skill:
+        console.print(f"[red]No custom skill named '{_normalize_custom_skill_name(skill_name)}' was found.[/]")
+        return
+
+    instruction = str(skill.get("instruction") or "").strip()
+    if not instruction:
+        console.print(f"[red]Custom skill '{skill.get('name', skill_name)}' has no instruction saved.[/]")
+        return
+
+    task = str(task_text or "").strip()
+    if not task:
+        task = click.prompt(
+            f"Describe what you want '{skill.get('name', skill_name)}' to do",
+            type=str,
+        ).strip()
+    if not task:
+        raise click.ClickException("A task description is required to run a custom skill.")
+
+    current_provider = str(state.get("provider") or os.environ.get("LLM_PROVIDER", "ollama")).strip()
+    current_model = str(state.get("model") or os.environ.get("LLM_MODEL", "")).strip()
+    current_base_url = str(state.get("base_url") or os.environ.get("LLM_BASE_URL", "")).strip()
+    current_api_key = str(state.get("api_key") or os.environ.get("LLM_API_KEY", "")).strip()
+
+    runtime_provider = str(skill.get("provider") or current_provider or "ollama").strip()
+    runtime_model = str(skill.get("model") or current_model or "").strip()
+    runtime_base_url = str(skill.get("base_url") or _provider_base_url(runtime_provider, state)).strip()
+    runtime_api_key = current_api_key
+    if runtime_provider != current_provider or runtime_base_url != current_base_url:
+        runtime_api_key = ""
+
+    composed_prompt = "\n\n".join(
+        [
+            f"You are running the custom skill '{skill.get('name', _normalize_custom_skill_name(skill_name))}'.",
+            f"Instruction:\n{instruction}",
+            f"Task:\n{task}",
+        ]
+    )
+
+    try:
+        _setup_env_overrides(runtime_provider, runtime_model, runtime_api_key or None, runtime_base_url)
+        state["provider"] = runtime_provider
+        state["model"] = runtime_model
+        state["base_url"] = runtime_base_url
+        state["api_key"] = runtime_api_key
+        _refresh_orchestrator(state)
+        asyncio.run(_send_message(state, composed_prompt, console))
+    finally:
+        _setup_env_overrides(current_provider, current_model, current_api_key or None, current_base_url)
+        state["provider"] = current_provider
+        state["model"] = current_model
+        state["base_url"] = current_base_url
+        state["api_key"] = current_api_key
+        _refresh_orchestrator(state)
+
+
 def _parse_json_params(raw: str) -> dict[str, Any]:
     text = raw.strip()
     if not text:
@@ -895,11 +1195,14 @@ def _is_parser_noise(error: str) -> bool:
     )
 
 
-async def _status_ticker(status, stop_event: asyncio.Event) -> None:
+async def _status_ticker(status, stop_event: asyncio.Event, status_state: dict[str, str]) -> None:
     started = time.perf_counter()
     while not stop_event.is_set():
         elapsed = time.perf_counter() - started
-        status.update(f"[bold orange1]Thinking... {elapsed:.1f}s[/]")
+        stage = str(status_state.get("message") or "Thinking").strip()
+        if not stage:
+            stage = "Thinking"
+        status.update(f"[bold orange1]{stage}... {elapsed:.1f}s[/]")
         try:
             await asyncio.sleep(0.8)
         except asyncio.CancelledError:
@@ -911,11 +1214,18 @@ async def _send_message(state, message: str, console) -> None:
     from rich.panel import Panel
 
     stop_event = asyncio.Event()
+    status_state = {"message": "Planning task"}
+
+    def _update_progress(stage: str) -> None:
+        clean = str(stage or "").strip()
+        if clean:
+            status_state["message"] = clean
+
     with console.status("[bold orange1]Thinking...[/]", spinner="dots") as status:
-        ticker = asyncio.create_task(_status_ticker(status, stop_event))
+        ticker = asyncio.create_task(_status_ticker(status, stop_event, status_state))
         try:
             _ensure_runtime_api_key(state, console)
-            result = await state["orchestrator"].chat(message)
+            result = await state["orchestrator"].chat(message, progress_callback=_update_progress)
         finally:
             stop_event.set()
             ticker.cancel()
@@ -976,6 +1286,7 @@ async def _send_message(state, message: str, console) -> None:
 
 def _repl(state, console):
     from rich.markdown import Markdown
+    from limbi.workspace import get_custom_skills
 
     _print_banner(console)
 
@@ -992,10 +1303,37 @@ def _repl(state, console):
         orchestrator = state["orchestrator"]
 
         if user_input.startswith("/"):
-            cmd = user_input.lower().split()[0]
+            parts = user_input.strip().split(maxsplit=2)
+            cmd = parts[0].lower()
             if cmd in ("/quit", "/exit", "/q"):
                 console.print("Goodbye.")
                 break
+            if cmd in ("/skills",):
+                subcommand = parts[1].lower() if len(parts) > 1 else ""
+                if subcommand in {"list", "show"}:
+                    _print_custom_skills(console, state)
+                elif subcommand in {"update", "edit"} and len(parts) > 2:
+                    from limbi.workspace import get_custom_skill
+
+                    skill_name = parts[2]
+                    skill = get_custom_skill(state["ws_config"], skill_name)
+                    if not skill:
+                        console.print(f"[yellow]No saved custom skill named '{_normalize_custom_skill_name(skill_name)}'.[/]")
+                    else:
+                        _save_custom_skill(state, console, skill_name, existing_skill=skill)
+                elif subcommand in {"delete", "remove"} and len(parts) > 2:
+                    _delete_custom_skill(state, console, parts[2])
+                else:
+                    _manage_custom_skills(state, console)
+                continue
+            if cmd in ("/skill",):
+                if len(parts) < 2:
+                    console.print("[yellow]Use /skill <name> [task][/]")
+                    continue
+                skill_name = parts[1]
+                task_text = parts[2] if len(parts) > 2 else ""
+                _run_custom_skill(state, console, skill_name, task_text=task_text)
+                continue
             if cmd in ("/agent",):
                 _run_manual_agent(state, console)
                 continue
@@ -1040,6 +1378,8 @@ def _repl(state, console):
                         """## Commands
 | Command | Description |
 |---------|-------------|
+| `/skills` | Open the custom skill manager |
+| `/skill` | Run a saved custom skill with a task |
 | `/agents` | Manually choose an agent and run one action |
 | `/agent` | Alias for `/agents` |
 | `/model` | Alias for `/models` |
@@ -1059,6 +1399,13 @@ Type a natural-language prompt to talk to Limbi.
 """
                     )
                 )
+                continue
+
+            custom_skills = get_custom_skills(state["ws_config"])
+            skill_name = _normalize_custom_skill_name(cmd.lstrip("/"))
+            if skill_name in custom_skills:
+                task_text = user_input[len(parts[0]):].strip()
+                _run_custom_skill(state, console, skill_name, task_text=task_text)
                 continue
 
         asyncio.run(_send_message(state, user_input, console))
@@ -1127,7 +1474,7 @@ Type a natural-language prompt to talk to Limbi.
     default=False,
     help="Skip workspace trust prompt (for CI/automation).",
 )
-@click.version_option(version="1.5.3", prog_name="limbi")
+@click.version_option(version="1.5.4", prog_name="limbi")
 def main(
     prompt: str | None,
     provider: str | None,

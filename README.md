@@ -15,7 +15,37 @@
 
 Limbi is an omni-agent orchestration platform for running many specialized AI agents from one command, one Python API, or one MCP-compatible editor workflow.
 
-Current package version: `1.5.3`
+Current package version: `1.5.4`
+
+## Recent Updates
+
+Limbi has grown from a simple agent runner into a workspace-aware orchestration layer.
+The recent changes focus on making it more practical for real terminal work, easier to
+guide from the keyboard, and easier to extend without rewriting the core runtime.
+
+What was added:
+
+- Live progress stages during thinking, so you can see when Limbi is planning, searching,
+  calculating, generating, or running delegated agents.
+- A custom skill system with `/skills`, `/skill`, update, and delete support.
+- Skill configs that can inherit the current provider, or pin their own provider/model.
+- Saved custom skills in `.limbi/config.json` for later reuse.
+- A safer skill runner that borrows the chosen runtime for the task and then restores the
+  original shell selection.
+- Better source-grounded URL research for prompts that include links.
+- Shared session memory that persists the current goal and context across turns.
+- Adaptive runtime budgeting so simple tasks stay light and harder tasks get more room.
+
+What changed:
+
+- The CLI now shows high-level progress instead of a blank waiting state.
+- Manual provider and model selection stays available, but the default flow is less noisy.
+- API keys are reused from workspace storage instead of being re-entered every time.
+- Custom skills can be created, updated, listed, and removed from inside the terminal.
+- The release flow has been kept explicit so version bumps stay predictable.
+
+In short: Limbi now tries harder to stay useful across longer sessions, not just within
+one single prompt.
 
 Current system size:
 
@@ -984,6 +1014,28 @@ TWINE_PASSWORD=${{ secrets.PYPI_API_TOKEN }}
 ```
 
 Keep bumping the package version before each release, because PyPI will reject any file name that already exists.
+
+### Release Command
+
+```bash
+# 1. Push the pending commit first
+git push origin main
+
+# 2. Bump version to 1.5.4
+sed -i '' 's/1.5.4/1.5.4/g' pyproject.toml setup.py limbi/__init__.py limbi/cli.py limbi/workspace.py README.md
+
+# 3. Commit the version bump
+git add -A && git commit -m "v1.5.4: custom skills and live progress updates" && git push origin main
+
+# 4. Clean, build, check, publish
+rm -rf dist/ build/ limbi.egg-info/
+python -m build
+python -m twine check dist/*
+python -m twine upload dist/*
+
+# 5. Upgrade locally to verify
+python -m pip install --upgrade limbi
+```
 
 ### `chromadb not installed`
 

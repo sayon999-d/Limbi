@@ -8,7 +8,7 @@ import os
 import re
 import time
 from urllib.parse import urlparse
-from typing import Any, AsyncIterator
+from typing import Any, AsyncIterator, Callable
 
 from langchain_core.language_models.chat_models import BaseChatModel
 from langchain_core.messages import HumanMessage, SystemMessage, AIMessage
@@ -174,6 +174,18 @@ def _build_recent_executions_text() -> str:
     return "\n".join(lines)
 
 
+def _emit_progress(
+    progress_callback: Callable[[str], None] | None,
+    message: str,
+) -> None:
+    if not progress_callback:
+        return
+    try:
+        progress_callback(message)
+    except Exception:
+        pass
+
+
 def _extract_urls(text: str) -> list[str]:
     candidates = re.findall(r"https?://[^\s<>()\[\]{}]+", text)
     urls: list[str] = []
@@ -188,6 +200,77 @@ def _extract_urls(text: str) -> list[str]:
         seen.add(cleaned)
         urls.append(cleaned)
     return urls
+
+
+def _looks_like_delegation_only(text: str) -> bool:
+    normalized = (text or "").strip().lower()
+    if not normalized:
+        return True
+    markers = [
+        "here is the delegation block",
+        "delegation block",
+        "agent execution results",
+        "let's use the research_agent",
+        "let us use the research_agent",
+        "here's how you can use it",
+    ]
+    if any(marker in normalized for marker in markers):
+        return True
+    return len(normalized.split()) < 45
+
+
+def _summarize_delegation_results(
+    delegation_results: list[dict[str, Any]],
+    user_message: str,
+) -> str:
+    if not delegation_results:
+        return ""
+
+    lines: list[str] = []
+    research_entries: list[str] = []
+
+    for result in delegation_results:
+        agent = result.get("agent", "unknown")
+        action = result.get("action", "unknown")
+        data = result.get("data", {}) or {}
+        message = data.get("message") or result.get("error") or "No message returned."
+
+        if agent == "research_agent" and action in {"web_search", "find_information"}:
+            results = data.get("results") or []
+            titles: list[str] = []
+            for item in results[:3]:
+                if isinstance(item, dict):
+                    title = str(item.get("title") or "").strip()
+                    snippet = str(item.get("snippet") or "").strip()
+                    url = str(item.get("url") or "").strip()
+                    if title:
+                        segment = title
+                        if snippet:
+                            segment += f": {snippet}"
+                        elif url:
+                            segment += f" ({url})"
+                        titles.append(segment)
+            if titles:
+                research_entries.append("\n".join(f"- {item}" for item in titles))
+                continue
+
+        lines.append(f"- {agent}.{action}: {message}")
+
+    summary_bits: list[str] = []
+    if research_entries:
+        summary_bits.append("Research summary:")
+        summary_bits.extend(research_entries)
+
+    if lines:
+        if summary_bits:
+            summary_bits.append("")
+        summary_bits.append("Other delegated work:")
+        summary_bits.extend(lines)
+
+    if not summary_bits:
+        summary_bits.append("The delegated tools completed, but they did not return a concise answer body.")
+
+    return "\n".join(summary_bits).strip()
 
 
 def _estimate_task_complexity(
@@ -364,10 +447,16 @@ class Orchestrator:
         except Exception as exc:
             logger.debug("Short-term memory record skipped: %s", exc)
 
-    async def _build_url_research_context(self, user_message: str) -> str:
+    async def _build_url_research_context(
+        self,
+        user_message: str,
+        progress_callback: Callable[[str], None] | None = None,
+    ) -> str:
         urls = _extract_urls(user_message)
         if not urls:
             return ""
+
+        _emit_progress(progress_callback, "Searching sources")
 
         try:
             web_agent = get_agent("web_scraping_agent")
@@ -472,7 +561,11 @@ class Orchestrator:
         )
         return "\n\n".join(source_blocks)
 
-    async def chat(self, user_message: str) -> dict[str, Any]:
+    async def chat(
+        self,
+        user_message: str,
+        progress_callback: Callable[[str], None] | None = None,
+    ) -> dict[str, Any]:
 
         clarification_questions = _needs_clarification(user_message)
         if clarification_questions:
@@ -513,6 +606,7 @@ class Orchestrator:
             }
 
         self._sync_session_state()
+        _emit_progress(progress_callback, "Planning task")
         self._record_turn(
             "user",
             user_message,
@@ -523,7 +617,13 @@ class Orchestrator:
         )
 
         rag_context = self._vector_store.get_context_string(user_message)
-        url_research_context = await self._build_url_research_context(user_message)
+        if rag_context:
+            _emit_progress(progress_callback, "Gathering workspace context")
+        url_research_context = await self._build_url_research_context(
+            user_message,
+            progress_callback=progress_callback,
+        )
+        _emit_progress(progress_callback, "Calculating runtime budget")
         agent_registry = _build_agent_registry_text()
         recent_execs = _build_recent_executions_text()
         shared_ctx = get_session_context(self._session_id)
@@ -560,6 +660,7 @@ class Orchestrator:
 
         started = time.perf_counter()
         try:
+            _emit_progress(progress_callback, "Generating response")
             response = await asyncio.to_thread(llm.invoke, messages)
             raw_text: str = response.content
         except Exception as exc:
@@ -586,8 +687,19 @@ class Orchestrator:
 
         delegation_results: list[dict[str, Any]] = []
         if parsed.has_delegations:
+            selected_agents = sorted(
+                {
+                    str(payload.get("agent", "")).strip()
+                    for payload in parsed.delegation_payloads
+                    if str(payload.get("agent", "")).strip()
+                }
+            )
+            if selected_agents:
+                _emit_progress(progress_callback, f"Selected agents: {', '.join(selected_agents)}")
+            _emit_progress(progress_callback, "Running delegated agents")
             delegation_results = await self._execute_delegations_parallel(
-                parsed.delegation_payloads
+                parsed.delegation_payloads,
+                progress_callback=progress_callback,
             )
 
             result_summary = "\n".join(
@@ -597,6 +709,13 @@ class Orchestrator:
             )
             feedback_msg = f"\n\n---\n** Agent Execution Results:**\n{result_summary}"
             parsed.conversation_text += feedback_msg
+
+        if delegation_results and _looks_like_delegation_only(parsed.conversation_text):
+            synthesized = _summarize_delegation_results(delegation_results, user_message)
+            parsed.conversation_text = (
+                f"{parsed.conversation_text}\n\n**Final Answer**\n{synthesized}"
+            ).strip()
+        _emit_progress(progress_callback, "Finalizing response")
 
         self._record_turn(
             "assistant",
@@ -636,7 +755,11 @@ class Orchestrator:
             "metrics": metrics,
         }
 
-    async def chat_stream(self, user_message: str) -> AsyncIterator[dict[str, Any]]:
+    async def chat_stream(
+        self,
+        user_message: str,
+        progress_callback: Callable[[str], None] | None = None,
+    ) -> AsyncIterator[dict[str, Any]]:
 
         clarification_questions = _needs_clarification(user_message)
         if clarification_questions:
@@ -684,6 +807,7 @@ class Orchestrator:
             return
 
         self._sync_session_state()
+        _emit_progress(progress_callback, "Planning task")
         self._record_turn(
             "user",
             user_message,
@@ -694,7 +818,13 @@ class Orchestrator:
         )
 
         rag_context = self._vector_store.get_context_string(user_message)
-        url_research_context = await self._build_url_research_context(user_message)
+        if rag_context:
+            _emit_progress(progress_callback, "Gathering workspace context")
+        url_research_context = await self._build_url_research_context(
+            user_message,
+            progress_callback=progress_callback,
+        )
+        _emit_progress(progress_callback, "Calculating runtime budget")
         agent_registry = _build_agent_registry_text()
         recent_execs = _build_recent_executions_text()
         shared_ctx = get_session_context(self._session_id)
@@ -732,6 +862,7 @@ class Orchestrator:
         full_text = ""
         started = time.perf_counter()
         try:
+            _emit_progress(progress_callback, "Generating response")
             async for chunk in llm.astream(messages):
                 token = chunk.content
                 if token:
@@ -749,11 +880,29 @@ class Orchestrator:
         delegation_results: list[dict[str, Any]] = []
         if parsed.has_delegations:
             yield {"type": "delegation_start", "count": len(parsed.delegation_payloads)}
+            selected_agents = sorted(
+                {
+                    str(payload.get("agent", "")).strip()
+                    for payload in parsed.delegation_payloads
+                    if str(payload.get("agent", "")).strip()
+                }
+            )
+            if selected_agents:
+                _emit_progress(progress_callback, f"Selected agents: {', '.join(selected_agents)}")
+            _emit_progress(progress_callback, "Running delegated agents")
             delegation_results = await self._execute_delegations_parallel(
-                parsed.delegation_payloads
+                parsed.delegation_payloads,
+                progress_callback=progress_callback,
             )
             for result in delegation_results:
                 yield {"type": "delegation_result", "result": result}
+
+        if delegation_results and _looks_like_delegation_only(parsed.conversation_text):
+            synthesized = _summarize_delegation_results(delegation_results, user_message)
+            parsed.conversation_text = (
+                f"{parsed.conversation_text}\n\n**Final Answer**\n{synthesized}"
+            ).strip()
+        _emit_progress(progress_callback, "Finalizing response")
 
         self._record_turn(
             "assistant",
@@ -794,11 +943,13 @@ class Orchestrator:
         }
 
     async def _execute_delegations_parallel(
-        self, delegations: list[dict[str, Any]]
+        self,
+        delegations: list[dict[str, Any]],
+        progress_callback: Callable[[str], None] | None = None,
     ) -> list[dict[str, Any]]:
 
         tasks = [
-            self._execute_with_retry(d) for d in delegations
+            self._execute_with_retry(d, progress_callback=progress_callback) for d in delegations
         ]
         results = await asyncio.gather(*tasks, return_exceptions=True)
 
@@ -822,6 +973,7 @@ class Orchestrator:
         self,
         delegation: dict[str, Any],
         max_retries: int = MAX_RETRIES,
+        progress_callback: Callable[[str], None] | None = None,
     ) -> AgentResult:
 
         agent_name = delegation.get("agent", "")
@@ -833,6 +985,7 @@ class Orchestrator:
             start_time = time.time()
             try:
                 agent = get_agent(agent_name)
+                _emit_progress(progress_callback, f"Running {agent_name}.{action}")
                 result = await asyncio.to_thread(agent.execute, action, params)
                 duration = (time.time() - start_time) * 1000
 
@@ -859,6 +1012,7 @@ class Orchestrator:
                     logger.debug("Context publish failed (non-fatal): %s", pub_err)
 
                 if result.success:
+                    _emit_progress(progress_callback, f"Collected result from {agent_name}.{action}")
                     if attempt > 0:
                         logger.info(
                             "%s.%s succeeded on attempt %d", agent_name, action, attempt + 1

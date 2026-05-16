@@ -12,9 +12,10 @@ logger = logging.getLogger("limbi.workspace")
 
 WORKSPACE_DIR_NAME = ".limbi"
 API_KEYS_CONFIG_KEY = "provider_api_keys"
+CUSTOM_SKILLS_CONFIG_KEY = "custom_skills"
 
 _DEFAULT_CONFIG = {
-    "version": "1.5.3",
+    "version": "1.5.4",
     "created_at": "",
     "provider": "ollama",
     "model": "llama3.2:3b",
@@ -24,6 +25,7 @@ _DEFAULT_CONFIG = {
     "session_ttl_hours": 24,
     "auto_publish_context": True,
     API_KEYS_CONFIG_KEY: {},
+    CUSTOM_SKILLS_CONFIG_KEY: {},
 }
 
 
@@ -57,6 +59,32 @@ def _normalize_provider_api_keys(config: dict[str, Any]) -> dict[str, Any]:
     }
     normalized[API_KEYS_CONFIG_KEY] = cleaned_keys
     normalized["api_key_set"] = bool(cleaned_keys)
+    return normalized
+
+
+def _normalize_custom_skills(config: dict[str, Any]) -> dict[str, Any]:
+    normalized = dict(config)
+    skills = normalized.get(CUSTOM_SKILLS_CONFIG_KEY)
+    if not isinstance(skills, dict):
+        skills = {}
+
+    cleaned: dict[str, dict[str, Any]] = {}
+    for raw_name, raw_skill in skills.items():
+        name = str(raw_name).strip().lower().replace(" ", "-")
+        if not name:
+            continue
+        skill = raw_skill if isinstance(raw_skill, dict) else {"instruction": str(raw_skill)}
+        cleaned[name] = {
+            "name": name,
+            "description": str(skill.get("description", "")).strip(),
+            "instruction": str(skill.get("instruction", "")).strip(),
+            "provider": str(skill.get("provider", "")).strip(),
+            "model": str(skill.get("model", "")).strip(),
+            "base_url": str(skill.get("base_url", "")).strip(),
+            "created_at": str(skill.get("created_at", "")).strip(),
+            "updated_at": str(skill.get("updated_at", "")).strip(),
+        }
+    normalized[CUSTOM_SKILLS_CONFIG_KEY] = cleaned
     return normalized
 
 
@@ -143,7 +171,10 @@ def init_workspace(base_dir: str | None = None) -> dict[str, Any]:
                 config["base_url"],
             )
 
-        config_path.write_text(json.dumps(_normalize_provider_api_keys(config), indent=2) + "\n", encoding="utf-8")
+        config_path.write_text(
+            json.dumps(_normalize_custom_skills(_normalize_provider_api_keys(config)), indent=2) + "\n",
+            encoding="utf-8",
+        )
         created.append(".limbi/config.json")
     else:
         existing.append(".limbi/config.json")
@@ -202,7 +233,7 @@ def load_config(base_dir: str | None = None) -> dict[str, Any]:
     if config_path.exists():
         try:
             loaded = json.loads(config_path.read_text(encoding="utf-8"))
-            normalized = _normalize_provider_api_keys(loaded)
+            normalized = _normalize_custom_skills(_normalize_provider_api_keys(loaded))
             if normalized != loaded:
                 save_config(normalized, base_dir=base_dir)
             return normalized
@@ -215,7 +246,10 @@ def load_config(base_dir: str | None = None) -> dict[str, Any]:
 def save_config(config: dict[str, Any], base_dir: str | None = None) -> None:
     ws = get_workspace_path(base_dir)
     config_path = ws / "config.json"
-    config_path.write_text(json.dumps(_normalize_provider_api_keys(config), indent=2) + "\n", encoding="utf-8")
+    config_path.write_text(
+        json.dumps(_normalize_custom_skills(_normalize_provider_api_keys(config)), indent=2) + "\n",
+        encoding="utf-8",
+    )
 
 
 def get_db_path(name: str) -> str:
@@ -248,3 +282,50 @@ def workspace_info() -> dict[str, Any]:
         "total_db_size_mb": round(total_db_size / (1024 * 1024), 2),
         "has_vector_store": (ws / "chroma_db").exists(),
     }
+
+
+def get_custom_skills(config: dict[str, Any]) -> dict[str, dict[str, Any]]:
+    skills = config.get(CUSTOM_SKILLS_CONFIG_KEY)
+    if not isinstance(skills, dict):
+        return {}
+    normalized = _normalize_custom_skills({CUSTOM_SKILLS_CONFIG_KEY: skills})
+    return normalized.get(CUSTOM_SKILLS_CONFIG_KEY, {})
+
+
+def get_custom_skill(config: dict[str, Any], name: str) -> dict[str, Any]:
+    skills = get_custom_skills(config)
+    return dict(skills.get(str(name).strip().lower().replace(" ", "-"), {}))
+
+
+def set_custom_skill(
+    config: dict[str, Any],
+    name: str,
+    skill: dict[str, Any],
+) -> dict[str, Any]:
+    normalized = dict(config)
+    skills = get_custom_skills(normalized)
+    skill_name = str(name).strip().lower().replace(" ", "-")
+    if not skill_name:
+        return normalized
+    now = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
+    skills[skill_name] = {
+        "name": skill_name,
+        "description": str(skill.get("description", "")).strip(),
+        "instruction": str(skill.get("instruction", "")).strip(),
+        "provider": str(skill.get("provider", "")).strip(),
+        "model": str(skill.get("model", "")).strip(),
+        "base_url": str(skill.get("base_url", "")).strip(),
+        "created_at": str(skill.get("created_at", "")).strip() or now,
+        "updated_at": now,
+    }
+    normalized[CUSTOM_SKILLS_CONFIG_KEY] = skills
+    return normalized
+
+
+def delete_custom_skill(config: dict[str, Any], name: str) -> dict[str, Any]:
+    normalized = dict(config)
+    skills = get_custom_skills(normalized)
+    skill_name = str(name).strip().lower().replace(" ", "-")
+    skills.pop(skill_name, None)
+    normalized[CUSTOM_SKILLS_CONFIG_KEY] = skills
+    return normalized
