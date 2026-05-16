@@ -33,7 +33,7 @@ _DEFAULT_PERMISSION_POLICY = {
 }
 
 _DEFAULT_CONFIG = {
-    "version": "1.6.1",
+    "version": "1.6.2",
     "created_at": "",
     "provider": "ollama",
     "model": "llama3.2:3b",

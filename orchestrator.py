@@ -319,6 +319,13 @@ def _looks_like_delegation_only(text: str) -> bool:
         "let's use the research_agent",
         "let us use the research_agent",
         "here's how you can use it",
+        "we can use the research_agent",
+        "we can use research_agent",
+        "after the research agent has completed",
+        "after the research agent completes",
+        "here's a suggested response",
+        "here is a suggested response",
+        "first, let's find out more",
     ]
     if any(marker in normalized for marker in markers):
         return True
@@ -1233,11 +1240,23 @@ class Orchestrator:
                 for r in delegation_results
             )
             feedback_msg = f"\n\n---\n** Agent Execution Results:**\n{result_summary}"
-            if _looks_like_delegation_only(parsed.conversation_text):
-                synthesized = _summarize_delegation_results(delegation_results, user_message)
+            synthesized = _summarize_delegation_results(delegation_results, user_message)
+            if research_mode:
+                parsed.conversation_text = synthesized or parsed.conversation_text
+            elif _looks_like_delegation_only(parsed.conversation_text):
                 parsed.conversation_text = synthesized or parsed.conversation_text
             else:
                 parsed.conversation_text += feedback_msg
+        if research_mode and delegation_results:
+            _emit_progress(progress_callback, "Synthesizing research answer")
+            repaired = await self._repair_research_answer(
+                user_message,
+                parsed.conversation_text,
+                url_research_context=url_research_context,
+                web_research_context=web_research_context,
+            )
+            if repaired:
+                parsed.conversation_text = repaired
         if research_mode and _looks_like_internal_agent_dump(parsed.conversation_text):
             _emit_progress(progress_callback, "Rewriting research answer")
             repaired = await self._repair_research_answer(
@@ -1551,9 +1570,22 @@ class Orchestrator:
             for result in delegation_results:
                 yield {"type": "delegation_result", "result": result}
 
-        if delegation_results and _looks_like_delegation_only(parsed.conversation_text):
+        if delegation_results:
             synthesized = _summarize_delegation_results(delegation_results, user_message)
-            parsed.conversation_text = synthesized or parsed.conversation_text
+            if research_mode:
+                parsed.conversation_text = synthesized or parsed.conversation_text
+            elif _looks_like_delegation_only(parsed.conversation_text):
+                parsed.conversation_text = synthesized or parsed.conversation_text
+        if research_mode and delegation_results:
+            _emit_progress(progress_callback, "Synthesizing research answer")
+            repaired = await self._repair_research_answer(
+                user_message,
+                parsed.conversation_text,
+                url_research_context=url_research_context,
+                web_research_context=web_research_context,
+            )
+            if repaired:
+                parsed.conversation_text = repaired
         if research_mode and _looks_like_internal_agent_dump(parsed.conversation_text):
             _emit_progress(progress_callback, "Rewriting research answer")
             repaired = await self._repair_research_answer(
