@@ -132,9 +132,13 @@ def _needs_clarification(user_message: str) -> list[str]:
     }
 
     has_task = any(verb in text for verb in task_verbs)
+    has_research_intent = _looks_like_web_research_prompt(user_message)
     has_explicit_target = any(word in text for word in explicit_targets)
     has_vague_language = any(word in text for word in vague_words)
     has_path_context = any(word in text for word in path_words)
+
+    if has_research_intent and len(words) <= 14:
+        return []
 
     if not has_task:
         if has_vague_language and len(words) <= 8:
