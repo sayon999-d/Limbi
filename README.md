@@ -15,7 +15,7 @@
 
 Limbi is an omni-agent orchestration platform for running many specialized AI agents from one command, one Python API, or one MCP-compatible editor workflow.
 
-Current package version: `1.5.4`
+Current package version: `1.5.5`
 
 ## Recent Updates
 
@@ -1021,11 +1021,11 @@ Keep bumping the package version before each release, because PyPI will reject a
 # 1. Push the pending commit first
 git push origin main
 
-# 2. Bump version to 1.5.4
-sed -i '' 's/1.5.4/1.5.4/g' pyproject.toml setup.py limbi/__init__.py limbi/cli.py limbi/workspace.py README.md
+# 2. Bump version to 1.5.5
+sed -i '' 's/1.5.5/1.5.5/g' pyproject.toml setup.py limbi/__init__.py limbi/cli.py limbi/workspace.py README.md
 
 # 3. Commit the version bump
-git add -A && git commit -m "v1.5.4: custom skills and live progress updates" && git push origin main
+git add -A && git commit -m "v1.5.5: custom skills and live progress updates" && git push origin main
 
 # 4. Clean, build, check, publish
 rm -rf dist/ build/ limbi.egg-info/

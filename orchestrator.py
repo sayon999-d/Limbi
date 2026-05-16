@@ -108,10 +108,15 @@ When you decide an action needs to be executed in the real world, include a \
 ## URL Research Context
 {url_research_context}
 
+## Internet Research Context
+{web_research_context}
+
 ## Source Grounding Rules
 - If URL research context is present, use it as the primary evidence source.
+- If internet research context is present, use it as the primary evidence source.
 - Prefer facts, headings, and quoted page content over generic memory.
 - If a URL cannot be fetched or rendered, say so plainly and do not invent details.
+- If the user asks for research, answer the topic directly from the research context and do not dump the agent registry unless the user asked about agents.
 """
 
 
@@ -159,7 +164,7 @@ def _build_agent_registry_text() -> str:
 def _build_recent_executions_text() -> str:
 
     try:
-        recent = get_recent_executions(limit=5)
+        recent = get_recent_executions(limit=3)
     except Exception:
         return ""
     if not recent:
@@ -172,6 +177,51 @@ def _build_recent_executions_text() -> str:
             f"{(' - ' + r['error']) if r.get('error') else ''}"
         )
     return "\n".join(lines)
+
+
+def _looks_like_web_research_prompt(user_message: str) -> bool:
+    text = user_message.lower()
+    return any(
+        token in text
+        for token in (
+            "research",
+            "search the internet",
+            "search internet",
+            "look up",
+            "find information",
+            "from the internet",
+            "online",
+            "web search",
+            "browse",
+            "latest on",
+            "current information",
+        )
+    )
+
+
+def _extract_research_query(user_message: str) -> str:
+    text = re.sub(r"https?://\S+", " ", user_message)
+    patterns = [
+        r"\bdo\s+some\s+research\s+about\b",
+        r"\bresearch\s+about\b",
+        r"\bresearch\s+on\b",
+        r"\bresearch\b",
+        r"\bsearch\s+the\s+internet\s+for\b",
+        r"\bsearch\s+internet\s+for\b",
+        r"\blook\s+up\b",
+        r"\bfind\s+information\s+about\b",
+        r"\bfind\s+information\s+on\b",
+        r"\bfrom\s+the\s+internet\b",
+        r"\bon\s+the\s+internet\b",
+        r"\bonline\b",
+        r"\bweb\s+search\b",
+        r"\bbrowse\b",
+    ]
+    for pattern in patterns:
+        text = re.sub(pattern, " ", text, flags=re.IGNORECASE)
+    text = re.sub(r"[\-\:\,\.\?\!]+$", " ", text).strip()
+    text = re.sub(r"\s+", " ", text).strip()
+    return text or user_message.strip()
 
 
 def _emit_progress(
@@ -278,6 +328,7 @@ def _estimate_task_complexity(
     *,
     rag_context: str = "",
     url_research_context: str = "",
+    web_research_context: str = "",
     shared_context: str = "",
 ) -> dict[str, Any]:
     text = user_message.lower()
@@ -305,6 +356,8 @@ def _estimate_task_complexity(
         score += 1
     if url_research_context:
         score += 2
+    if web_research_context:
+        score += 2
     if shared_context:
         score += min(2, max(0, len(shared_context) // 800))
 
@@ -323,13 +376,13 @@ def _suggest_runtime_limits(level: str, base_max_tokens: int, base_temperature: 
     base_temperature = max(0.0, float(base_temperature or 0.1))
 
     if level == "simple":
-        max_tokens = min(base_max_tokens, 768)
+        max_tokens = min(base_max_tokens, 512)
         temperature = min(base_temperature, 0.05)
     elif level == "complex":
-        max_tokens = min(max(base_max_tokens, 2048), 3072)
+        max_tokens = min(max(base_max_tokens, 1536), 2048)
         temperature = min(base_temperature, 0.1)
     else:
-        max_tokens = min(max(base_max_tokens, 1024), 1536)
+        max_tokens = min(max(base_max_tokens, 768), 1024)
         temperature = min(base_temperature, 0.08)
 
     return {
@@ -561,6 +614,72 @@ class Orchestrator:
         )
         return "\n\n".join(source_blocks)
 
+    async def _build_web_research_context(
+        self,
+        user_message: str,
+        progress_callback: Callable[[str], None] | None = None,
+    ) -> str:
+        if _extract_urls(user_message):
+            return ""
+        if not _looks_like_web_research_prompt(user_message):
+            return ""
+
+        query = _extract_research_query(user_message)
+        try:
+            research_agent = get_agent("research_agent")
+        except KeyError:
+            return ""
+
+        _emit_progress(progress_callback, "Searching internet")
+        try:
+            result = await asyncio.to_thread(
+                research_agent.execute,
+                "web_search",
+                {
+                    "query": query,
+                    "num_results": 4,
+                    "engine": "auto",
+                },
+            )
+        except Exception as exc:
+            logger.debug("Web research search failed: %s", exc)
+            return ""
+
+        if not result.success:
+            return ""
+
+        data = result.data or {}
+        results = data.get("results") or []
+        if not isinstance(results, list) or not results:
+            return ""
+
+        blocks = [
+            "### Search Query",
+            f"- Query: {query}",
+            f"- Search engine: {data.get('search_engine', 'unknown')}",
+            "",
+            "### Top Results",
+        ]
+        for item in results[:4]:
+            if not isinstance(item, dict):
+                continue
+            title = str(item.get("title") or "").strip()
+            url = str(item.get("url") or "").strip()
+            snippet = str(item.get("snippet") or "").strip()
+            if not title and not url and not snippet:
+                continue
+            line = f"- {title}" if title else "- Result"
+            if snippet:
+                line += f": {snippet}"
+            if url:
+                line += f" ({url})"
+            blocks.append(line)
+        blocks.append("")
+        blocks.append("### Guidance")
+        blocks.append("- Use the search results above as the evidence base.")
+        blocks.append("- If the question needs deeper verification, fetch the best URLs next.")
+        return "\n".join(blocks).strip()
+
     async def chat(
         self,
         user_message: str,
@@ -623,6 +742,10 @@ class Orchestrator:
             user_message,
             progress_callback=progress_callback,
         )
+        web_research_context = await self._build_web_research_context(
+            user_message,
+            progress_callback=progress_callback,
+        )
         _emit_progress(progress_callback, "Calculating runtime budget")
         agent_registry = _build_agent_registry_text()
         recent_execs = _build_recent_executions_text()
@@ -631,6 +754,7 @@ class Orchestrator:
             user_message,
             rag_context=rag_context,
             url_research_context=url_research_context,
+            web_research_context=web_research_context,
             shared_context=shared_ctx,
         )
         runtime_limits = _suggest_runtime_limits(
@@ -646,6 +770,7 @@ class Orchestrator:
             agent_registry=agent_registry,
             rag_context=rag_context,
             url_research_context=url_research_context,
+            web_research_context=web_research_context,
             recent_executions=recent_execs,
             shared_agent_context=shared_ctx,
         )
@@ -824,6 +949,10 @@ class Orchestrator:
             user_message,
             progress_callback=progress_callback,
         )
+        web_research_context = await self._build_web_research_context(
+            user_message,
+            progress_callback=progress_callback,
+        )
         _emit_progress(progress_callback, "Calculating runtime budget")
         agent_registry = _build_agent_registry_text()
         recent_execs = _build_recent_executions_text()
@@ -832,6 +961,7 @@ class Orchestrator:
             user_message,
             rag_context=rag_context,
             url_research_context=url_research_context,
+            web_research_context=web_research_context,
             shared_context=shared_ctx,
         )
         runtime_limits = _suggest_runtime_limits(
@@ -847,6 +977,7 @@ class Orchestrator:
             agent_registry=agent_registry,
             rag_context=rag_context,
             url_research_context=url_research_context,
+            web_research_context=web_research_context,
             recent_executions=recent_execs,
             shared_agent_context=shared_ctx,
         )
