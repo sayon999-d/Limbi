@@ -16,6 +16,42 @@ from langchain_core.language_models.chat_models import BaseChatModel
 
 logger = logging.getLogger("limbi.llm_provider")
 
+_PROVIDER_DEFAULT_MODELS = {
+    "ollama": "llama3.2:3b",
+    "ollama_cloud": "gpt-oss:120b-cloud",
+    "openai": "gpt-4o",
+    "anthropic": "claude-sonnet-4-20250514",
+    "google": "gemini-1.5-pro",
+    "groq": "llama-3.3-70b-versatile",
+    "openrouter": "openai/gpt-4o",
+    "huggingface": "meta-llama/Llama-3.1-8B-Instruct",
+    "chutes": "meta-llama/Llama-3.1-8B-Instruct",
+    "bytez": "meta-llama/Llama-3.1-8B-Instruct",
+    "together": "meta-llama/Llama-3-70b-chat-hf",
+    "mistral": "mistral-large-latest",
+    "azure": "gpt-4o",
+    "cohere": "command-r-plus",
+}
+
+_PROVIDER_MODEL_ALIASES = {
+    "groq": {
+        "llama-3.1-70b-versatile": "llama-3.3-70b-versatile",
+        "llama3-70b-8192": "llama-3.3-70b-versatile",
+        "deepseek-r1-distill-llama-70b": "llama-3.3-70b-versatile",
+    },
+}
+
+
+def normalize_provider_model(provider_name: str, model: str | None = None) -> str:
+    provider = (provider_name or "").lower().strip()
+    normalized_model = (model or "").strip()
+    aliases = _PROVIDER_MODEL_ALIASES.get(provider, {})
+    if normalized_model in aliases:
+        return aliases[normalized_model]
+    if normalized_model:
+        return normalized_model
+    return _PROVIDER_DEFAULT_MODELS.get(provider, "llama3.2:3b")
+
 @dataclass
 class ProviderConfig:
 
@@ -32,15 +68,28 @@ class ProviderConfig:
     @classmethod
     def from_env(cls) -> "ProviderConfig":
         provider = os.getenv("LLM_PROVIDER", "ollama").lower().strip()
-        base_url = os.getenv("LLM_BASE_URL", os.getenv("OLLAMA_BASE_URL", "http://localhost:11434"))
-        is_ollama_cloud = provider == "ollama_cloud" or "ollama.com" in base_url.lower()
-        default_model = "gpt-oss:120b-cloud" if is_ollama_cloud else "llama3.2:3b"
+        explicit_base_url = os.getenv("LLM_BASE_URL", "").strip()
+        ollama_base_url = os.getenv("OLLAMA_BASE_URL", "").strip()
+        is_ollama_cloud = provider == "ollama_cloud" or "ollama.com" in explicit_base_url.lower() or "ollama.com" in ollama_base_url.lower()
+        local_provider_names = {"ollama", "lmstudio", "vllm", "localai", "koboldcpp", "llamacpp"}
+        default_model = normalize_provider_model(provider, None)
         default_base_url = "https://ollama.com/v1" if is_ollama_cloud else "http://localhost:11434"
+        if provider in {"openai", "anthropic", "google", "groq", "together", "mistral", "azure", "cohere", "openrouter", "huggingface", "chutes", "bytez"}:
+            default_base_url = ""
+        if provider == "openai_compatible" and explicit_base_url:
+            default_base_url = explicit_base_url
+        if provider in local_provider_names:
+            default_base_url = explicit_base_url or ollama_base_url or default_base_url
+        if provider == "ollama" and not explicit_base_url and ollama_base_url:
+            default_base_url = ollama_base_url
 
         return cls(
             provider=provider,
-            model=os.getenv("LLM_MODEL", os.getenv("OLLAMA_MODEL", default_model)),
-            base_url=base_url or default_base_url,
+            model=normalize_provider_model(
+                provider,
+                os.getenv("LLM_MODEL", os.getenv("OLLAMA_MODEL", default_model)),
+            ),
+            base_url=explicit_base_url or default_base_url,
             api_key=os.getenv("LLM_API_KEY", os.getenv("OLLAMA_API_KEY", "")),
             temperature=float(os.getenv("LLM_TEMPERATURE", "0.1")),
             max_tokens=int(os.getenv("LLM_MAX_TOKENS", "1024")),
@@ -155,7 +204,7 @@ class GroqProvider(BaseLLMProvider):
     def get_chat_model(self) -> BaseChatModel:
         from langchain_groq import ChatGroq
         return ChatGroq(
-            model=self.config.model or "llama-3.1-70b-versatile",
+            model=normalize_provider_model(self.provider_name(), self.config.model),
             api_key=self.config.api_key,
             temperature=self.config.temperature,
             max_tokens=self.config.max_tokens,

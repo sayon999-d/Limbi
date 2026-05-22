@@ -937,9 +937,42 @@ export LIMBI_CORS_ORIGINS="http://127.0.0.1:8000,http://localhost:8000"
 
 If you are only using Limbi on your own machine, you can leave `LIMBI_API_KEY` empty and keep the default localhost origins.
 
-## Bootstrap
+## Install
 
-Limbi includes a small bootstrap checker for setting up a new machine or verifying a fresh environment.
+Limbi now has two easy installation paths:
+
+### Homebrew
+
+Tap the repo and install Limbi through Homebrew:
+
+```bash
+brew tap sayon999-d/limbi https://github.com/sayon999-d/Limbi-.git
+brew install limbi
+```
+
+### One-line installer
+
+You can also bootstrap and install Limbi directly from the repo:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/sayon999-d/Limbi-/main/scripts/install.sh | bash
+```
+
+On Windows PowerShell:
+
+```powershell
+irm https://raw.githubusercontent.com/sayon999-d/Limbi-/main/scripts/install.ps1 | iex
+```
+
+If you want the installer to pull straight from the repo instead of PyPI, set:
+
+```bash
+LIMBI_INSTALL_SOURCE=git
+```
+
+### Bootstrap check
+
+Limbi also includes a small bootstrap checker for setting up a new machine or verifying a fresh environment.
 
 Use it like this:
 
@@ -954,13 +987,6 @@ It checks for:
 - ripgrep
 - ffmpeg
 - Node.js and npm
-
-There are also convenience wrappers:
-
-```bash
-bash scripts/install.sh
-powershell -File scripts/install.ps1
-```
 
 The bootstrap script does not modify your system automatically. It prints the missing tools and the
 most obvious install path for the current platform, which keeps the setup step safe and predictable.

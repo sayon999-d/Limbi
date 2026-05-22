@@ -11,7 +11,7 @@ from pathlib import Path
 from typing import Any, Callable
 
 import click
-from limbi.llm_provider import list_available_models, provider_requires_api_key
+from limbi.llm_provider import list_available_models, normalize_provider_model, provider_requires_api_key
 
 
 _PROVIDER_CHOICES = {
@@ -106,7 +106,7 @@ _PROVIDER_CHOICES = {
         "description": "Google (Gemini)",
     },
     "groq": {
-        "model": "llama-3.1-70b-versatile",
+        "model": "llama-3.3-70b-versatile",
         "base_url": "",
         "type": "hosted",
         "description": "Groq (fast inference)",
@@ -183,7 +183,7 @@ _LOW_MEMORY_LOCAL_MODELS = {
 }
 
 _OLLAMA_CLOUD_MODELS = [
-    "deepseek-v3.1.6.3b-cloud",
+    "deepseek-v3.1.6.4b-cloud",
     "qwen3-coder:480b-cloud",
     "gpt-oss:120b-cloud",
     "gpt-oss:20b-cloud",
@@ -225,7 +225,7 @@ def _print_banner(console):
 
     title = Text()
     title.append("LIMBI", style="bold bright_green")
-    title.append(" v1.6.3", style="bold white")
+    title.append(" v1.6.4", style="bold white")
     title.append(" - Omni-Agent Orchestrator", style="white")
 
     help_line = Text()
@@ -649,6 +649,7 @@ def _configure_runtime_from_model_choice(state: dict[str, Any], console) -> None
             type=str,
         ).strip()
 
+    model = normalize_provider_model(provider, model)
     _setup_env_overrides(provider, model, api_key, base_url)
     if not os.environ.get("LLM_MAX_TOKENS"):
         os.environ["LLM_MAX_TOKENS"] = str(min(int(state["ws_config"].get("max_tokens", 1024)), 1024))
@@ -1855,7 +1856,7 @@ Type a natural-language prompt to talk to Limbi.
     default=False,
     help="Skip workspace trust prompt (for CI/automation).",
 )
-@click.version_option(version="1.6.3", prog_name="limbi")
+@click.version_option(version="1.6.4", prog_name="limbi")
 def main(
     prompt: str | None,
     provider: str | None,
@@ -1940,6 +1941,8 @@ def main(
         provider = ws_config.get("provider")
     if not model and not os.environ.get("LLM_MODEL"):
         model = ws_config.get("model")
+    if provider:
+        model = normalize_provider_model(provider, model)
     if not os.environ.get("LLM_BASE_URL"):
         os.environ["LLM_BASE_URL"] = ws_config.get("base_url", "")
 
