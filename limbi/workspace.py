@@ -13,6 +13,7 @@ logger = logging.getLogger("limbi.workspace")
 WORKSPACE_DIR_NAME = ".limbi"
 SKILL_HUB_DIR_NAME = "skill_hub"
 API_KEYS_CONFIG_KEY = "provider_api_keys"
+PREFERRED_MODELS_CONFIG_KEY = "preferred_models"
 CUSTOM_SKILLS_CONFIG_KEY = "custom_skills"
 PERMISSIONS_CONFIG_KEY = "permissions"
 
@@ -40,10 +41,11 @@ _DEFAULT_CONFIG = {
     "model": "llama3.2:3b",
     "base_url": "http://localhost:11434",
     "temperature": 0.1,
-    "max_tokens": 1024,
+    "max_tokens": 768,
     "session_ttl_hours": 24,
     "auto_publish_context": True,
     API_KEYS_CONFIG_KEY: {},
+    PREFERRED_MODELS_CONFIG_KEY: {},
     CUSTOM_SKILLS_CONFIG_KEY: {},
     PERMISSIONS_CONFIG_KEY: _DEFAULT_PERMISSION_POLICY,
 }
@@ -79,6 +81,22 @@ def _normalize_provider_api_keys(config: dict[str, Any]) -> dict[str, Any]:
     }
     normalized[API_KEYS_CONFIG_KEY] = cleaned_keys
     normalized["api_key_set"] = bool(cleaned_keys)
+    return normalized
+
+
+def _normalize_preferred_models(config: dict[str, Any]) -> dict[str, Any]:
+    normalized = dict(config)
+    preferred = normalized.get(PREFERRED_MODELS_CONFIG_KEY)
+    if not isinstance(preferred, dict):
+        preferred = {}
+
+    cleaned: dict[str, str] = {}
+    for key, value in preferred.items():
+        cleaned_key = str(key).strip().lower()
+        cleaned_value = str(value).strip()
+        if cleaned_key and cleaned_value:
+            cleaned[cleaned_key] = cleaned_value
+    normalized[PREFERRED_MODELS_CONFIG_KEY] = cleaned
     return normalized
 
 
@@ -147,7 +165,7 @@ def _normalize_permissions(config: dict[str, Any]) -> dict[str, Any]:
         }
 
     normalized[PERMISSIONS_CONFIG_KEY] = cleaned
-    return normalized
+    return _normalize_preferred_models(normalized)
 
 
 def get_provider_api_keys(config: dict[str, Any]) -> dict[str, str]:
@@ -191,6 +209,41 @@ def delete_provider_api_key(
     base_url: str | None = None,
 ) -> dict[str, Any]:
     return set_provider_api_key(config, provider, "", base_url=base_url)
+
+
+def preferred_model_id(provider: str, base_url: str | None = None) -> str:
+    name = (provider or "").strip().lower()
+    normalized_base = (base_url or "").strip().rstrip("/")
+    if name in {"openai_compatible", "azure", "azure_openai"} and normalized_base:
+        return f"{name}::{normalized_base}"
+    return name
+
+
+def get_preferred_model(config: dict[str, Any], provider: str, base_url: str | None = None) -> str:
+    models = config.get(PREFERRED_MODELS_CONFIG_KEY)
+    if not isinstance(models, dict):
+        return ""
+    return str(models.get(preferred_model_id(provider, base_url), "")).strip()
+
+
+def set_preferred_model(
+    config: dict[str, Any],
+    provider: str,
+    model: str,
+    base_url: str | None = None,
+) -> dict[str, Any]:
+    normalized = dict(config)
+    models = normalized.get(PREFERRED_MODELS_CONFIG_KEY)
+    if not isinstance(models, dict):
+        models = {}
+    key = preferred_model_id(provider, base_url)
+    cleaned_model = str(model or "").strip()
+    if cleaned_model:
+        models[key] = cleaned_model
+    elif key in models:
+        models.pop(key, None)
+    normalized[PREFERRED_MODELS_CONFIG_KEY] = models
+    return _normalize_preferred_models(normalized)
 
 
 def get_workspace_path(base_dir: str | None = None) -> Path:

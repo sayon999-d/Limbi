@@ -76,8 +76,15 @@ def estimate_hallucination_risk(
     parsed_errors: list[str] | None = None,
     delegations: list[dict[str, Any]] | None = None,
     clarification_requested: bool = False,
+    task_complexity: str = "moderate",
 ) -> int:
-    risk = 12
+    complexity = (task_complexity or "moderate").strip().lower()
+    base_risk = {
+        "simple": 5,
+        "moderate": 8,
+        "complex": 12,
+    }.get(complexity, 8)
+    risk = base_risk
     errors = parsed_errors or []
     steps = delegations or []
 
@@ -122,6 +129,7 @@ def build_runtime_metrics(
         parsed_errors=parsed_errors,
         delegations=delegations,
         clarification_requested=clarification_requested,
+        task_complexity=task_complexity,
     )
     return {
         "latency_ms": round(elapsed_ms, 1),

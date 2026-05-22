@@ -183,7 +183,7 @@ _LOW_MEMORY_LOCAL_MODELS = {
 }
 
 _OLLAMA_CLOUD_MODELS = [
-    "deepseek-v3.1.6.5b-cloud",
+    "deepseek-v3.1.6.6b-cloud",
     "qwen3-coder:480b-cloud",
     "gpt-oss:120b-cloud",
     "gpt-oss:20b-cloud",
@@ -225,7 +225,7 @@ def _print_banner(console):
 
     title = Text()
     title.append("LIMBI", style="bold bright_green")
-    title.append(" v1.6.5", style="bold white")
+    title.append(" v1.6.6", style="bold white")
     title.append(" - Omni-Agent Orchestrator", style="white")
 
     help_line = Text()
@@ -575,7 +575,13 @@ def _refresh_orchestrator(state: dict[str, Any]) -> None:
 
 
 def _configure_runtime_from_model_choice(state: dict[str, Any], console) -> None:
-    from limbi.workspace import get_provider_api_key, save_config, set_provider_api_key
+    from limbi.workspace import (
+        get_preferred_model,
+        get_provider_api_key,
+        save_config,
+        set_preferred_model,
+        set_provider_api_key,
+    )
 
     ws_config = state["ws_config"]
 
@@ -623,7 +629,11 @@ def _configure_runtime_from_model_choice(state: dict[str, Any], console) -> None
 
     catalog_models = list_available_models(provider, api_key=api_key, base_url=base_url)
     if catalog_models:
-        preferred_model = state.get("model") if state.get("model") in catalog_models else defaults.get("model")
+        preferred_model = get_preferred_model(ws_config, provider, base_url)
+        if preferred_model not in catalog_models:
+            preferred_model = str(state.get("model") or "").strip()
+        if preferred_model not in catalog_models:
+            preferred_model = str(defaults.get("model") or "").strip()
         if preferred_model not in catalog_models:
             preferred_model = catalog_models[0]
         model_item = _select_from_menu(
@@ -678,7 +688,7 @@ def _configure_runtime_from_model_choice(state: dict[str, Any], console) -> None
     model = _resolve_runtime_model_choice(provider, model, base_url, console=console)
     _setup_env_overrides(provider, model, api_key, base_url)
     if not os.environ.get("LLM_MAX_TOKENS"):
-        os.environ["LLM_MAX_TOKENS"] = str(min(int(state["ws_config"].get("max_tokens", 1024)), 1024))
+        os.environ["LLM_MAX_TOKENS"] = str(min(int(state["ws_config"].get("max_tokens", 768)), 768))
 
     state["provider"] = provider
     state["model"] = model
@@ -695,6 +705,7 @@ def _configure_runtime_from_model_choice(state: dict[str, Any], console) -> None
             ws_config = set_provider_api_key(ws_config, provider, api_key, base_url)
         else:
             ws_config["api_key_set"] = bool(ws_config.get("provider_api_keys"))
+        ws_config = set_preferred_model(ws_config, provider, model, base_url)
         save_config(ws_config)
         state["ws_config"] = ws_config
 
@@ -1882,7 +1893,7 @@ Type a natural-language prompt to talk to Limbi.
     default=False,
     help="Skip workspace trust prompt (for CI/automation).",
 )
-@click.version_option(version="1.6.5", prog_name="limbi")
+@click.version_option(version="1.6.6", prog_name="limbi")
 def main(
     prompt: str | None,
     provider: str | None,
@@ -1923,7 +1934,7 @@ def main(
     else:
         trust_level = "full"
 
-    from limbi.workspace import init_workspace, load_config, save_config
+    from limbi.workspace import init_workspace, load_config, save_config, get_preferred_model
 
     ws_result = init_workspace()
 
@@ -1966,7 +1977,7 @@ def main(
     if not provider and not os.environ.get("LLM_PROVIDER"):
         provider = ws_config.get("provider")
     if not model and not os.environ.get("LLM_MODEL"):
-        model = ws_config.get("model")
+        model = get_preferred_model(ws_config, provider or "", os.environ.get("LLM_BASE_URL")) or ws_config.get("model")
     if provider:
         model = normalize_provider_model(provider, model)
     if not os.environ.get("LLM_BASE_URL"):
@@ -1982,8 +1993,8 @@ def main(
         os.environ.get("LLM_BASE_URL"),
     ):
         if not os.environ.get("LLM_MAX_TOKENS"):
-            workspace_max_tokens = int(ws_config.get("max_tokens", 1024))
-            os.environ["LLM_MAX_TOKENS"] = str(min(workspace_max_tokens, 1024))
+            workspace_max_tokens = int(ws_config.get("max_tokens", 768))
+            os.environ["LLM_MAX_TOKENS"] = str(min(workspace_max_tokens, 768))
 
     try:
         from dotenv import load_dotenv

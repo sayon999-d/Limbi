@@ -17,6 +17,22 @@ Limbi is an omni-agent orchestration platform for running many specialized AI ag
 
 Current package version: `1.6.2`
 
+## Quick Install
+
+Use whichever install path fits your setup:
+
+```bash
+# Homebrew
+brew tap sayon999-d/limbi https://github.com/sayon999-d/Limbi-.git
+brew install limbi
+
+# curl installer
+curl -fsSL https://raw.githubusercontent.com/sayon999-d/Limbi-/main/scripts/install.sh | bash
+
+# pip
+python -m pip install --upgrade limbi
+```
+
 ## Recent Updates
 
 Limbi has grown from a simple agent runner into a workspace-aware orchestration layer.

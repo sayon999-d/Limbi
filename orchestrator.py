@@ -162,11 +162,37 @@ def _needs_clarification(user_message: str) -> list[str]:
 
     return []
 
-def _build_agent_registry_text() -> str:
+def _build_agent_registry_text(compact: bool = False) -> str:
 
     agents = list_agents()
     if not agents:
         return "*(No agents currently registered)*"
+    if compact:
+        preferred_order = [
+            "research_agent",
+            "learning_agent",
+            "browser_agent",
+            "file_agent",
+            "code_agent",
+            "context_memory_agent",
+            "mutation_agent",
+            "scheduler_agent",
+            "task_board_agent",
+        ]
+        compact_agents = {
+            name: agents[name]
+            for name in preferred_order
+            if name in agents
+        }
+        if compact_agents:
+            lines = [
+                "*(Compact registry for simple prompts. Use /agents for the full list.)*",
+                "| Agent | Available Actions |",
+                "|-------|-------------------|",
+            ]
+            for name, actions in compact_agents.items():
+                lines.append(f"| `{name}` | {', '.join(f'`{a}`' for a in actions[:4])} |")
+            return "\n".join(lines)
     lines = ["| Agent | Available Actions |", "|-------|-------------------|"]
     for name, actions in agents.items():
         lines.append(f"| `{name}` | {', '.join(f'`{a}`' for a in actions)} |")
@@ -454,13 +480,13 @@ def _suggest_runtime_limits(level: str, base_max_tokens: int, base_temperature: 
     base_temperature = max(0.0, float(base_temperature or 0.1))
 
     if level == "simple":
-        max_tokens = min(base_max_tokens, 512)
+        max_tokens = min(base_max_tokens, 256)
         temperature = min(base_temperature, 0.05)
     elif level == "complex":
-        max_tokens = min(max(base_max_tokens, 1536), 2048)
+        max_tokens = min(max(base_max_tokens, 1024), 1536)
         temperature = min(base_temperature, 0.1)
     else:
-        max_tokens = min(max(base_max_tokens, 768), 1024)
+        max_tokens = min(max(base_max_tokens, 512), 768)
         temperature = min(base_temperature, 0.08)
 
     return {
@@ -524,6 +550,40 @@ def _decide_task_route(
         confidence = 0.72
 
     return {"route": route, "reason": reason, "confidence": round(min(confidence, 0.98), 2)}
+
+
+def _classify_llm_error(exc: Exception, provider_name: str = "", model_name: str = "") -> str:
+    message = str(exc).strip()
+    lowered = message.lower()
+    provider_label = provider_name or "the selected provider"
+    model_label = model_name or "the selected model"
+
+    token_signals = (
+        "token limit",
+        "maximum context length",
+        "context length",
+        "context window",
+        "too many tokens",
+        "max tokens",
+        "output tokens",
+        "input tokens",
+        "exceeded the context",
+        "exceeds the context",
+    )
+    if any(signal in lowered for signal in token_signals):
+        return (
+            f"Token limit hit for {provider_label} / {model_label}. "
+            "Try a smaller prompt, a smaller model, or lower max_tokens."
+        )
+
+    usage_signals = ("rate limit", "quota", "usage limit", "429")
+    if any(signal in lowered for signal in usage_signals):
+        return (
+            f"Usage limit hit for {provider_label} / {model_label}. "
+            "Wait a moment, then try again or switch providers."
+        )
+
+    return ""
 
 class Orchestrator:
 
@@ -1142,7 +1202,6 @@ class Orchestrator:
                 },
             )
         _emit_progress(progress_callback, "Calculating runtime budget")
-        agent_registry = _build_agent_registry_text()
         recent_execs = "" if research_mode else _build_recent_executions_text()
         shared_ctx = get_session_context(
             self._session_id,
@@ -1156,6 +1215,7 @@ class Orchestrator:
             web_research_context=web_research_context,
             shared_context=shared_ctx,
         )
+        agent_registry = _build_agent_registry_text(compact=task_profile["level"] == "simple" and task_route == "direct")
         research_source_count = url_research_context.count("### Source ") + web_research_context.count("- [W")
         suggested_model = _suggest_model_for_task(
             self._provider.provider_name(),
@@ -1215,11 +1275,12 @@ class Orchestrator:
             raw_text: str = response.content
         except Exception as exc:
             logger.error("LLM call failed: %s", exc)
-            finish_trace(status="error", final_answer="LLM provider unavailable")
+            friendly_error = _classify_llm_error(exc, self._provider.provider_name(), self._provider.config.model)
+            finish_trace(status="error", final_answer=friendly_error or "LLM provider unavailable")
             return {
-                "conversation_text": f" {self._provider_unavailable_message()}",
+                "conversation_text": f" {friendly_error or self._provider_unavailable_message()}",
                 "delegations_executed": [],
-                "errors": ["LLM provider unavailable"],
+                "errors": [friendly_error or "LLM provider unavailable"],
                 "metrics": {
                     "latency_ms": round((time.perf_counter() - started) * 1000, 1),
                     "latency_s": round(time.perf_counter() - started, 2),
@@ -1482,7 +1543,7 @@ class Orchestrator:
                 },
             )
         _emit_progress(progress_callback, "Calculating runtime budget")
-        agent_registry = _build_agent_registry_text()
+        agent_registry = _build_agent_registry_text(compact=task_profile["level"] == "simple" and task_route == "direct")
         recent_execs = "" if research_mode else _build_recent_executions_text()
         shared_ctx = get_session_context(
             self._session_id,
@@ -1558,10 +1619,11 @@ class Orchestrator:
                     full_text += token
                     yield {"type": "token", "content": token}
         except Exception as exc:
-            finish_trace(status="error", final_answer="LLM provider unavailable")
+            friendly_error = _classify_llm_error(exc, self._provider.provider_name(), self._provider.config.model)
+            finish_trace(status="error", final_answer=friendly_error or "LLM provider unavailable")
             yield {
                 "type": "error",
-                "content": self._provider_unavailable_message(),
+                "content": friendly_error or self._provider_unavailable_message(),
             }
             return
 
