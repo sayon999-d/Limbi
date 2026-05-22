@@ -183,7 +183,7 @@ _LOW_MEMORY_LOCAL_MODELS = {
 }
 
 _OLLAMA_CLOUD_MODELS = [
-    "deepseek-v3.1.6.4b-cloud",
+    "deepseek-v3.1.6.5b-cloud",
     "qwen3-coder:480b-cloud",
     "gpt-oss:120b-cloud",
     "gpt-oss:20b-cloud",
@@ -225,7 +225,7 @@ def _print_banner(console):
 
     title = Text()
     title.append("LIMBI", style="bold bright_green")
-    title.append(" v1.6.4", style="bold white")
+    title.append(" v1.6.5", style="bold white")
     title.append(" - Omni-Agent Orchestrator", style="white")
 
     help_line = Text()
@@ -468,6 +468,31 @@ def _provider_base_url(provider: str, state: dict[str, Any] | None = None) -> st
     return str(defaults.get("base_url") or "").strip()
 
 
+def _resolve_runtime_model_choice(
+    provider: str,
+    model: str,
+    base_url: str,
+    *,
+    console=None,
+) -> str:
+    normalized = normalize_provider_model(provider, model)
+    provider_key = str(provider or "").strip().lower()
+    if provider_key == "ollama":
+        try:
+            installed = list_available_models("ollama", base_url=base_url)
+        except Exception:
+            installed = []
+        if installed and normalized not in installed:
+            fallback = installed[0]
+            if console is not None:
+                console.print(
+                    f"[yellow]Local Ollama model '{normalized}' is not installed on this machine.[/]"
+                )
+                console.print(f"[yellow]Using installed model '{fallback}' instead.[/]")
+            normalized = fallback
+    return normalized
+
+
 def _store_provider_api_key(
     state: dict[str, Any],
     provider: str,
@@ -650,6 +675,7 @@ def _configure_runtime_from_model_choice(state: dict[str, Any], console) -> None
         ).strip()
 
     model = normalize_provider_model(provider, model)
+    model = _resolve_runtime_model_choice(provider, model, base_url, console=console)
     _setup_env_overrides(provider, model, api_key, base_url)
     if not os.environ.get("LLM_MAX_TOKENS"):
         os.environ["LLM_MAX_TOKENS"] = str(min(int(state["ws_config"].get("max_tokens", 1024)), 1024))
@@ -1856,7 +1882,7 @@ Type a natural-language prompt to talk to Limbi.
     default=False,
     help="Skip workspace trust prompt (for CI/automation).",
 )
-@click.version_option(version="1.6.4", prog_name="limbi")
+@click.version_option(version="1.6.5", prog_name="limbi")
 def main(
     prompt: str | None,
     provider: str | None,
@@ -1946,6 +1972,7 @@ def main(
     if not os.environ.get("LLM_BASE_URL"):
         os.environ["LLM_BASE_URL"] = ws_config.get("base_url", "")
 
+    model = _resolve_runtime_model_choice(provider or "", model or "", os.environ.get("LLM_BASE_URL", ""), console=console)
     api_key = _resolve_api_key(provider, api_key, os.environ.get("LLM_BASE_URL"))
     ws_config = load_config()
     _setup_env_overrides(provider, model, api_key, os.environ.get("LLM_BASE_URL"))

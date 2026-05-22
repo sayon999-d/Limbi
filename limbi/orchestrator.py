@@ -11,7 +11,7 @@ from typing import Any, AsyncIterator, Callable
 from langchain_core.language_models.chat_models import BaseChatModel
 from langchain_core.messages import HumanMessage, SystemMessage, AIMessage
 
-from .llm_provider import get_llm_provider, ProviderConfig, provider_requires_api_key
+from .llm_provider import get_llm_provider, ProviderConfig, provider_requires_api_key, list_available_models
 
 from .payload_parser import ParsedOutput, parse_llm_output
 from .agents import get_agent, list_agents, AgentResult
@@ -603,6 +603,30 @@ class Orchestrator:
             self._llm_cache[cache_key] = llm
         return llm
 
+    def _ollama_installed_models(self) -> list[str]:
+        if self._provider.provider_name() != "ollama":
+            return []
+        try:
+            return list_available_models("ollama", base_url=self._provider.config.base_url)
+        except Exception:
+            return []
+
+    def _provider_unavailable_message(self) -> str:
+        if self._provider.provider_name() == "ollama":
+            installed = self._ollama_installed_models()
+            if installed and self._model_name not in installed:
+                installed_preview = ", ".join(installed[:5])
+                return (
+                    f"I found your Ollama server, but the selected model (`{self._model_name}`) "
+                    f"isn't installed there.\n\nTry one of these installed models: {installed_preview}\n"
+                    f"or pull the model first with: `ollama pull {self._model_name}`"
+                )
+            return (
+                f"I couldn't reach the local Ollama server for `{self._model_name}`.\n\n"
+                f"Make sure Ollama is running: `ollama serve`"
+            )
+        return "I couldn't reach the selected model provider. Check the provider, API key, and base URL."
+
     def _sync_session_state(self) -> None:
         try:
             set_shared_state_value(self._session_id, "provider", self._provider.provider_name())
@@ -1192,10 +1216,7 @@ class Orchestrator:
             logger.error("LLM call failed: %s", exc)
             finish_trace(status="error", final_answer="LLM provider unavailable")
             return {
-                "conversation_text": (
-                    f" I couldn't reach the local model (`{self._model_name}`).\n\n"
-                    f"Make sure Ollama is running: `ollama serve`"
-                ),
+                "conversation_text": f" {self._provider_unavailable_message()}",
                 "delegations_executed": [],
                 "errors": ["LLM provider unavailable"],
                 "metrics": {
@@ -1539,7 +1560,7 @@ class Orchestrator:
             finish_trace(status="error", final_answer="LLM provider unavailable")
             yield {
                 "type": "error",
-                "content": "LLM error: provider unavailable. Make sure Ollama is running.",
+                "content": self._provider_unavailable_message(),
             }
             return
 
