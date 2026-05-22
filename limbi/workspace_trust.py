@@ -97,11 +97,12 @@ def list_trusted_workspaces() -> list[dict[str, Any]]:
 def prompt_workspace_trust(
     path: str | Path | None = None,
     console: Any = None,
+    force_prompt: bool = False,
 ) -> str:
     resolved = _resolve_workspace(path)
 
     existing = get_trust_level(resolved)
-    if existing in ("full", "readonly"):
+    if existing in ("full", "readonly") and not force_prompt:
         return existing
 
     if console is None:
@@ -200,6 +201,7 @@ def check_workspace_trust(
     path: str | Path | None = None,
     console: Any = None,
     skip_prompt: bool = False,
+    force_prompt: bool = False,
 ) -> str:
     resolved = _resolve_workspace(path)
     existing = get_trust_level(resolved)
@@ -214,10 +216,10 @@ def check_workspace_trust(
             sys.exit(1)
         return "denied"
 
-    if existing in ("full", "readonly"):
+    if existing in ("full", "readonly") and not force_prompt:
         return existing
 
     if skip_prompt:
         return "untrusted"
 
-    return prompt_workspace_trust(resolved, console)
+    return prompt_workspace_trust(resolved, console, force_prompt=force_prompt)

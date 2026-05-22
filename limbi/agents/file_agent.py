@@ -11,7 +11,7 @@ from typing import Any
 
 from . import BaseAgent
 from limbi.permissions import require_permission
-from limbi.workspace import load_config
+from limbi.workspace import get_workspace_root, load_config
 
 logger = logging.getLogger("limbi.agents.file")
 
@@ -95,8 +95,10 @@ class FileAgent(BaseAgent):
         workspace_root = Path(
             os.getenv("LIMBI_WORKSPACE_ROOT")
             or os.getenv("WORKSPACE_ROOT")
-            or Path.cwd()
+            or get_workspace_root()
         ).expanduser().resolve()
+        if not workspace_root.exists():
+            workspace_root = get_workspace_root()
         allow_outside = os.getenv("LIMBI_ALLOW_OUTSIDE_WORKSPACE", "").strip().lower() in ("1", "true", "yes", "on")
         for candidate in candidates:
             if isinstance(candidate, str) and candidate.strip():

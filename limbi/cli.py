@@ -183,7 +183,7 @@ _LOW_MEMORY_LOCAL_MODELS = {
 }
 
 _OLLAMA_CLOUD_MODELS = [
-    "deepseek-v3.1.6.6b-cloud",
+    "deepseek-v3.1.6.7b-cloud",
     "qwen3-coder:480b-cloud",
     "gpt-oss:120b-cloud",
     "gpt-oss:20b-cloud",
@@ -225,7 +225,7 @@ def _print_banner(console):
 
     title = Text()
     title.append("LIMBI", style="bold bright_green")
-    title.append(" v1.6.6", style="bold white")
+    title.append(" v1.6.7", style="bold white")
     title.append(" - Omni-Agent Orchestrator", style="white")
 
     help_line = Text()
@@ -1893,7 +1893,7 @@ Type a natural-language prompt to talk to Limbi.
     default=False,
     help="Skip workspace trust prompt (for CI/automation).",
 )
-@click.version_option(version="1.6.6", prog_name="limbi")
+@click.version_option(version="1.6.7", prog_name="limbi")
 def main(
     prompt: str | None,
     provider: str | None,
@@ -1928,7 +1928,7 @@ def main(
         console.print("[yellow]Workspace trust reset.[/] You will be prompted again.\n")
 
     if not skip_trust and not os.environ.get("LIMBI_SKIP_TRUST"):
-        trust_level = check_workspace_trust(console=console)
+        trust_level = check_workspace_trust(console=console, force_prompt=True)
         if trust_level == "denied":
             sys.exit(1)
     else:

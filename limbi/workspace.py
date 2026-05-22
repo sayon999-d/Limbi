@@ -251,6 +251,10 @@ def get_workspace_path(base_dir: str | None = None) -> Path:
     return base / WORKSPACE_DIR_NAME
 
 
+def get_workspace_root(base_dir: str | None = None) -> Path:
+    return get_workspace_path(base_dir).parent
+
+
 def init_workspace(base_dir: str | None = None) -> dict[str, Any]:
     ws = get_workspace_path(base_dir)
     is_new = not ws.exists()
@@ -342,8 +346,7 @@ def _set_workspace_env(ws: Path) -> None:
         "CHROMA_PERSIST_DIR": str(ws / "chroma_db"),
     }
     for key, path in defaults.items():
-        if not os.environ.get(key):
-            os.environ[key] = path
+        os.environ[key] = path
 
 
 def load_config(base_dir: str | None = None) -> dict[str, Any]:
