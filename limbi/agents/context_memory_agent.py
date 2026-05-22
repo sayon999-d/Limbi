@@ -9,6 +9,7 @@ import sqlite3
 import threading
 import time
 import uuid
+from collections import Counter
 from typing import Any
 
 from . import BaseAgent
@@ -20,6 +21,7 @@ _lock = threading.Lock()
 
 _hot_cache: dict[str, list[dict[str, Any]]] = {}   
 _agent_subscriptions: dict[str, set[str]] = {}       
+_FTS5_AVAILABLE = False
 
 _GRAPH_EDGE_BONUS = 0.12
 _GRAPH_RECENCY_BONUS = 0.08
@@ -94,6 +96,21 @@ def _deserialize_state_value(value: str) -> Any:
         return value
 
 
+def _normalize_episode_text(text: str, limit: int = 1200) -> str:
+    cleaned = re.sub(r"\s+", " ", (text or "").strip())
+    if len(cleaned) > limit:
+        cleaned = cleaned[: limit - 3].rstrip() + "..."
+    return cleaned
+
+
+def _search_episode_tokens(text: str) -> set[str]:
+    return {
+        token
+        for token in re.findall(r"[a-z0-9_]+", (text or "").lower())
+        if len(token) > 2
+    }
+
+
 def _get_conn() -> sqlite3.Connection:
     conn = sqlite3.connect(_CTX_DB_PATH, check_same_thread=False)
     conn.row_factory = sqlite3.Row
@@ -102,6 +119,7 @@ def _get_conn() -> sqlite3.Connection:
 
 
 def _init_context_db() -> None:
+    global _FTS5_AVAILABLE
     with _lock:
         conn = _get_conn()
         conn.executescript("""
@@ -164,6 +182,20 @@ def _init_context_db() -> None:
                 PRIMARY KEY (session_id, key)
             );
 
+            CREATE TABLE IF NOT EXISTS episodic_logs (
+                id              TEXT PRIMARY KEY,
+                session_id      TEXT NOT NULL,
+                actor           TEXT NOT NULL,
+                episode_type    TEXT NOT NULL,
+                content         TEXT NOT NULL,
+                summary         TEXT NOT NULL,
+                tags            TEXT DEFAULT '[]',
+                metadata        TEXT DEFAULT '{}',
+                importance      REAL DEFAULT 0.5,
+                created_at      TEXT NOT NULL,
+                updated_at      TEXT NOT NULL
+            );
+
             CREATE INDEX IF NOT EXISTS idx_ctx_session ON context_entries(session_id);
             CREATE INDEX IF NOT EXISTS idx_ctx_source ON context_entries(source_agent);
             CREATE INDEX IF NOT EXISTS idx_ctx_type ON context_entries(entry_type);
@@ -176,7 +208,26 @@ def _init_context_db() -> None:
             CREATE INDEX IF NOT EXISTS idx_graph_edges_session ON context_graph_edges(session_id);
             CREATE INDEX IF NOT EXISTS idx_graph_edges_from ON context_graph_edges(from_node_id);
             CREATE INDEX IF NOT EXISTS idx_graph_edges_to ON context_graph_edges(to_node_id);
+            CREATE INDEX IF NOT EXISTS idx_episode_session ON episodic_logs(session_id);
+            CREATE INDEX IF NOT EXISTS idx_episode_actor ON episodic_logs(actor);
         """)
+        try:
+            conn.execute("""
+                CREATE VIRTUAL TABLE IF NOT EXISTS episodic_logs_fts
+                USING fts5(
+                    session_id,
+                    actor,
+                    episode_type,
+                    content,
+                    summary,
+                    tags,
+                    metadata,
+                    tokenize='unicode61'
+                )
+            """)
+            _FTS5_AVAILABLE = True
+        except sqlite3.OperationalError:
+            _FTS5_AVAILABLE = False
         conn.commit()
         conn.close()
 
@@ -281,6 +332,187 @@ def publish_agent_result(
         source_agent, action, session_id, "success" if success else "failed",
     )
     return entry_id
+
+
+def _record_episodic_log(
+    session_id: str,
+    *,
+    actor: str,
+    episode_type: str,
+    content: str,
+    summary: str = "",
+    tags: list[str] | None = None,
+    metadata: dict[str, Any] | None = None,
+    importance: float = 0.5,
+) -> str:
+    episode_id = f"ep_{uuid.uuid4().hex[:12]}"
+    now = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
+    tags = tags or []
+    summary_text = _normalize_episode_text(summary or content)
+    content_text = _normalize_episode_text(content, limit=2000)
+    with _lock:
+        conn = _get_conn()
+        conn.execute(
+            """INSERT INTO episodic_logs
+               (id, session_id, actor, episode_type, content, summary, tags, metadata, importance, created_at, updated_at)
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+            (
+                episode_id,
+                session_id,
+                actor,
+                episode_type,
+                content_text,
+                summary_text,
+                json.dumps(tags),
+                json.dumps(metadata or {}),
+                importance,
+                now,
+                now,
+            ),
+        )
+        if _FTS5_AVAILABLE:
+            try:
+                conn.execute(
+                    """INSERT INTO episodic_logs_fts
+                       (session_id, actor, episode_type, content, summary, tags, metadata)
+                       VALUES (?, ?, ?, ?, ?, ?, ?)""",
+                    (
+                        session_id,
+                        actor,
+                        episode_type,
+                        content_text,
+                        summary_text,
+                        " ".join(tags),
+                        json.dumps(metadata or {}),
+                    ),
+                )
+            except sqlite3.OperationalError as exc:
+                logger.debug("Episodic FTS insert skipped: %s", exc)
+        conn.commit()
+        conn.close()
+    return episode_id
+
+
+def _search_episodic_logs(session_id: str, query: str = "", limit: int = 10) -> list[dict[str, Any]]:
+    query = _normalize_episode_text(query, limit=300)
+    with _lock:
+        conn = _get_conn()
+        if query and _FTS5_AVAILABLE:
+            try:
+                rows = conn.execute(
+                    """SELECT id, session_id, actor, episode_type, content, summary, tags, metadata, importance, created_at, updated_at
+                       FROM episodic_logs_fts
+                       WHERE session_id = ? AND episodic_logs_fts MATCH ?
+                       ORDER BY created_at DESC
+                       LIMIT ?""",
+                    (session_id, query, limit),
+                ).fetchall()
+            except sqlite3.OperationalError:
+                rows = conn.execute(
+                    """SELECT * FROM episodic_logs
+                       WHERE session_id = ?
+                       AND (content LIKE ? OR summary LIKE ? OR tags LIKE ?)
+                       ORDER BY created_at DESC
+                       LIMIT ?""",
+                    (session_id, f"%{query}%", f"%{query}%", f"%{query}%", limit),
+                ).fetchall()
+        elif query:
+            rows = conn.execute(
+                """SELECT * FROM episodic_logs
+                   WHERE session_id = ?
+                   AND (content LIKE ? OR summary LIKE ? OR tags LIKE ?)
+                   ORDER BY created_at DESC
+                   LIMIT ?""",
+                (session_id, f"%{query}%", f"%{query}%", f"%{query}%", limit),
+            ).fetchall()
+        else:
+            rows = conn.execute(
+                """SELECT * FROM episodic_logs
+                   WHERE session_id = ?
+                   ORDER BY created_at DESC
+                   LIMIT ?""",
+                (session_id, limit),
+            ).fetchall()
+        conn.close()
+
+    episodes: list[dict[str, Any]] = []
+    for row in rows:
+        raw_tags = row["tags"] if "tags" in row.keys() else "[]"
+        raw_metadata = row["metadata"] if "metadata" in row.keys() else "{}"
+        try:
+            tags = json.loads(raw_tags or "[]")
+        except Exception:
+            tags = []
+        try:
+            metadata = json.loads(raw_metadata or "{}")
+        except Exception:
+            metadata = {}
+        content = str(row["content"] or "")
+        summary = str(row["summary"] or "")
+        tokens = _search_episode_tokens(f"{content} {summary} {' '.join(tags)}")
+        episodes.append(
+            {
+                "id": row["id"],
+                "actor": row["actor"],
+                "episode_type": row["episode_type"],
+                "content": content,
+                "summary": summary,
+                "tags": tags,
+                "metadata": metadata,
+                "importance": float(row["importance"] or 0.0) if "importance" in row.keys() else 0.5,
+                "created_at": row["created_at"],
+                "updated_at": row["updated_at"],
+                "tokens": sorted(tokens),
+            }
+        )
+    return episodes
+
+
+def _build_user_model(session_id: str, query: str = "", limit: int = 20) -> dict[str, Any]:
+    episodes = _search_episodic_logs(session_id, query=query, limit=limit)
+    topics = Counter()
+    intents = Counter()
+    tones = Counter()
+    for episode in episodes:
+        tokens = set(episode.get("tokens") or [])
+        topics.update(tokens)
+        text = f"{episode.get('summary', '')} {episode.get('content', '')}".lower()
+        if any(word in text for word in ("research", "search", "citation", "source")):
+            intents["evidence_based"] += 1
+        if any(word in text for word in ("build", "create", "implement", "fix", "save", "write")):
+            intents["execution"] += 1
+        if any(word in text for word in ("short", "concise", "brief", "quick")):
+            tones["concise"] += 1
+        if any(word in text for word in ("detailed", "explain", "why", "how", "guide")):
+            tones["detailed"] += 1
+
+    top_topics = [token for token, _ in topics.most_common(8)]
+    style = "balanced"
+    if tones["concise"] > tones["detailed"]:
+        style = "concise"
+    elif tones["detailed"] > tones["concise"]:
+        style = "detailed"
+
+    model = {
+        "thesis": "The user prefers Limbi to stay practical, research-grounded, and execution-oriented.",
+        "antithesis": "The user gets frustrated when Limbi leaks internal plans, repeats context, or guesses instead of answering.",
+        "synthesis": (
+            "Keep answers short for simple tasks, use citations for research, preserve project state, "
+            "and ask clarifying questions only when the request is genuinely ambiguous."
+        ),
+        "preferred_style": style,
+        "recurring_topics": top_topics,
+        "dominant_intent": intents.most_common(1)[0][0] if intents else "general",
+        "response_strategy": [
+            "Answer directly",
+            "Use the current workspace and session memory",
+            "Prefer evidence over speculation",
+            "Escalate to tools only when the task benefits from it",
+        ],
+        "episodes_considered": len(episodes),
+    }
+    set_shared_state_value(session_id, "user_model", model)
+    return model
 
 
 def set_shared_state_value(
@@ -659,6 +891,22 @@ def get_session_context(
                     rendered = rendered[:697].rstrip() + "..."
                 lines.append(f"- **{key}**: {rendered}")
 
+        user_model = state_snapshot.get("user_model")
+        if user_model:
+            rendered = user_model if isinstance(user_model, str) else json.dumps(user_model, ensure_ascii=False)
+            if len(rendered) > 1000:
+                rendered = rendered[:997].rstrip() + "..."
+            lines.append("### User Model")
+            lines.append(f"- {rendered}")
+
+    episodic_entries = _search_episodic_logs(session_id, query=query, limit=6)
+    if episodic_entries:
+        lines.append("### Episodic Memory")
+        for episode in episodic_entries:
+            lines.append(
+                f"- [{episode.get('actor', '?')}] {episode.get('summary') or episode.get('content', '')}"
+            )
+
     if not entries:
         return "\n".join(lines) if len(lines) > 1 else ""
 
@@ -683,6 +931,7 @@ class ContextMemoryAgent(BaseAgent):
         with _lock:
             conn = _get_conn()
             ctx_count = conn.execute("SELECT COUNT(*) FROM context_entries").fetchone()[0]
+            episode_count = conn.execute("SELECT COUNT(*) FROM episodic_logs").fetchone()[0]
             handoff_count = conn.execute("SELECT COUNT(*) FROM agent_handoffs").fetchone()[0]
             state_keys = conn.execute("SELECT COUNT(*) FROM session_state").fetchone()[0]
             node_count = conn.execute("SELECT COUNT(*) FROM context_graph_nodes").fetchone()[0]
@@ -695,6 +944,7 @@ class ContextMemoryAgent(BaseAgent):
             "type": "inter_agent_memory",
             "status": "ready",
             "context_entries": ctx_count,
+            "episodic_logs": episode_count,
             "graph_nodes": node_count,
             "graph_edges": edge_count,
             "handoffs_recorded": handoff_count,
@@ -704,7 +954,8 @@ class ContextMemoryAgent(BaseAgent):
             "capabilities": [
                 "store_context", "recall_context", "share_with_agent",
                 "get_agent_context", "set_shared_state", "get_shared_state",
-                "get_handoff_chain", "summarize_session",
+                "get_handoff_chain", "summarize_session", "search_episodic_logs",
+                "build_user_model",
             ],
         }
 
@@ -781,6 +1032,17 @@ class ContextMemoryAgent(BaseAgent):
             conn.commit()
             conn.close()
 
+        _record_episodic_log(
+            session_id,
+            actor=source_agent or "unknown",
+            episode_type=entry_type,
+            content=content,
+            summary=content[:400],
+            tags=tags,
+            metadata=entry["metadata"],
+            importance=0.6 if priority == "high" else 0.5,
+        )
+
         logger.info("Context stored: %s from %s [%s]", entry_id, source_agent, entry_type)
         return {
             "message": f"Context stored ({entry_type}) from {source_agent or 'unknown'}",
@@ -855,6 +1117,35 @@ class ContextMemoryAgent(BaseAgent):
             "query": query,
             "entries": entries,
             "session_id": session_id,
+        }
+
+    def handle_search_episodic_logs(
+        self,
+        query: str = "",
+        session_id: str = "global",
+        limit: int = 10,
+        **kw: Any,
+    ) -> dict[str, Any]:
+        episodes = _search_episodic_logs(session_id, query=query, limit=limit)
+        return {
+            "message": f"Found {len(episodes)} episodic logs",
+            "query": query,
+            "entries": episodes,
+            "session_id": session_id,
+        }
+
+    def handle_build_user_model(
+        self,
+        session_id: str = "global",
+        query: str = "",
+        limit: int = 20,
+        **kw: Any,
+    ) -> dict[str, Any]:
+        model = _build_user_model(session_id, query=query, limit=limit)
+        return {
+            "message": "Built user model",
+            "session_id": session_id,
+            "user_model": model,
         }
 
     def handle_share_with_agent(

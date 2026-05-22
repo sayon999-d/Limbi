@@ -14,6 +14,16 @@ from pathlib import Path
 from typing import Any
 
 from limbi.agents import BaseAgent, list_agents, _AGENT_REGISTRY
+from ..workspace import (
+    delete_custom_skill,
+    export_custom_skill_pack,
+    get_custom_skill,
+    list_skill_hub,
+    publish_skill_pack,
+    load_config,
+    save_config,
+    set_custom_skill,
+)
 
 logger = logging.getLogger("limbi.agents.mutation")
 
@@ -84,6 +94,11 @@ class MutationAgent(BaseAgent):
                 "evolve_agent",
                 "list_mutations",
                 "rollback",
+                "propose_skill",
+                "create_skill",
+                "evolve_skill",
+                "publish_skill_pack",
+                "list_skill_hub",
             ],
             "pattern_version": _CURRENT_PATTERN_VERSION,
             "pending_proposals": len(
@@ -484,3 +499,155 @@ class MutationAgent(BaseAgent):
             "rolled_back": True,
             "agent_name": agent_name,
         }
+
+    def handle_propose_skill(
+        self,
+        skill_name: str = "",
+        instruction: str = "",
+        description: str = "",
+        provider: str = "",
+        model: str = "",
+        base_url: str = "",
+        capabilities: list[str] | None = None,
+        examples: list[str] | None = None,
+        tags: list[str] | None = None,
+        standard: str = "agentskills.io-compatible",
+        self_improving: bool = True,
+        **kw: Any,
+    ) -> dict[str, Any]:
+        if not skill_name:
+            raise ValueError("'skill_name' is required")
+        normalized = skill_name.strip().lower().replace(" ", "-")
+        payload = {
+            "name": normalized,
+            "description": description,
+            "instruction": instruction,
+            "provider": provider,
+            "model": model,
+            "base_url": base_url,
+            "capabilities": capabilities or [],
+            "examples": examples or [],
+            "tags": tags or [],
+            "standard": standard,
+            "self_improving": self_improving,
+            "version": "1.0.0",
+            "source": "mutation_agent",
+        }
+        proposal_id = str(uuid.uuid4())[:8]
+        token = hashlib.sha256(f"skill:{proposal_id}:{time.time()}".encode()).hexdigest()[:16]
+        _PROPOSALS[proposal_id] = {
+            "id": proposal_id,
+            "type": "skill",
+            "skill_name": normalized,
+            "proposal": payload,
+            "approval_token": token,
+            "status": "pending",
+            "created_at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
+            "applied_at": None,
+        }
+        return {
+            "message": f"Skill proposal '{normalized}' ready for review",
+            "proposal_id": proposal_id,
+            "approval_token": token,
+            "skill": payload,
+            "requires_approval": True,
+        }
+
+    def handle_create_skill(
+        self,
+        approval_token: str = "",
+        proposal_id: str = "",
+        **kw: Any,
+    ) -> dict[str, Any]:
+        if not approval_token:
+            raise ValueError("'approval_token' is required")
+        proposal = None
+        for p in _PROPOSALS.values():
+            if p.get("type") == "skill" and p.get("approval_token") == approval_token:
+                proposal = p
+                break
+        if proposal_id and proposal_id in _PROPOSALS:
+            proposal = _PROPOSALS[proposal_id]
+        if proposal is None or proposal.get("type") != "skill":
+            return {"message": "No matching skill proposal found", "approved": False}
+        if proposal["approval_token"] != approval_token:
+            return {"message": "Approval token mismatch -- permission denied", "approved": False}
+        skill = proposal["proposal"]
+        config = set_custom_skill(load_config(), skill["name"], skill)
+        save_config(config)
+        proposal["status"] = "applied"
+        proposal["applied_at"] = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
+        return {
+            "message": f"Skill '{skill['name']}' created",
+            "approved": True,
+            "skill": get_custom_skill(config, skill["name"]),
+        }
+
+    def handle_evolve_skill(
+        self,
+        skill_name: str = "",
+        refinement: str = "",
+        approval_token: str = "",
+        **kw: Any,
+    ) -> dict[str, Any]:
+        if not skill_name:
+            raise ValueError("'skill_name' is required")
+        current = get_custom_skill(load_config(), skill_name)
+        if not current:
+            return {"message": f"Skill '{skill_name}' not found", "exists": False}
+        if not approval_token:
+            proposal_id = str(uuid.uuid4())[:8]
+            token = hashlib.sha256(f"skill-evolve:{proposal_id}:{time.time()}".encode()).hexdigest()[:16]
+            _PROPOSALS[proposal_id] = {
+                "id": proposal_id,
+                "type": "skill_evolution",
+                "skill_name": skill_name,
+                "approval_token": token,
+                "status": "pending",
+                "created_at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
+                "applied_at": None,
+                "backup_skill": current,
+                "refinement": refinement,
+            }
+            return {
+                "message": f"Skill evolution preview for '{skill_name}' ready for review",
+                "proposal_id": proposal_id,
+                "approval_token": token,
+                "requires_approval": True,
+                "skill": current,
+                "refinement": refinement,
+            }
+        proposal = None
+        for p in _PROPOSALS.values():
+            if p.get("type") == "skill_evolution" and p.get("approval_token") == approval_token:
+                proposal = p
+                break
+        if proposal is None:
+            return {"message": "Invalid or expired approval token", "approved": False}
+        current = dict(proposal.get("backup_skill") or current)
+        current["instruction"] = (str(current.get("instruction", "")).strip() + "\n\n" + refinement).strip()
+        current["self_improving"] = True
+        current["last_refined_at"] = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
+        current["evaluation_notes"] = refinement
+        config = set_custom_skill(load_config(), skill_name, current)
+        save_config(config)
+        proposal["status"] = "applied"
+        proposal["applied_at"] = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
+        return {
+            "message": f"Skill '{skill_name}' evolved",
+            "approved": True,
+            "skill": get_custom_skill(config, skill_name),
+        }
+
+    def handle_publish_skill_pack(
+        self,
+        skill_name: str = "",
+        metadata: dict[str, Any] | None = None,
+        **kw: Any,
+    ) -> dict[str, Any]:
+        if not skill_name:
+            raise ValueError("'skill_name' is required")
+        return publish_skill_pack(load_config(), skill_name, metadata=metadata)
+
+    def handle_list_skill_hub(self, **kw: Any) -> dict[str, Any]:
+        return {"message": "Listed skill hub", "skills": list_skill_hub()}

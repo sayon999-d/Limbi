@@ -19,8 +19,13 @@ class WebScrapingAgent(BrowserAgent):
             "status": "ready",
             "capabilities": [
                 "fetch_page",
+                "navigate",
                 "extract_links",
                 "inspect_forms",
+                "click_selector",
+                "type_text",
+                "search_web",
+                "screenshot_page",
                 "summarize_page",
                 "check_status",
             ],

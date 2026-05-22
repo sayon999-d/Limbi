@@ -11,6 +11,7 @@ from typing import Any
 logger = logging.getLogger("limbi.workspace")
 
 WORKSPACE_DIR_NAME = ".limbi"
+SKILL_HUB_DIR_NAME = "skill_hub"
 API_KEYS_CONFIG_KEY = "provider_api_keys"
 CUSTOM_SKILLS_CONFIG_KEY = "custom_skills"
 PERMISSIONS_CONFIG_KEY = "permissions"
@@ -103,6 +104,15 @@ def _normalize_custom_skills(config: dict[str, Any]) -> dict[str, Any]:
             "version": str(skill.get("version", "")).strip() or "1.0.0",
             "created_at": str(skill.get("created_at", "")).strip(),
             "updated_at": str(skill.get("updated_at", "")).strip(),
+            "examples": list(skill.get("examples", []) or []),
+            "capabilities": list(skill.get("capabilities", []) or []),
+            "tags": list(skill.get("tags", []) or []),
+            "source": str(skill.get("source", "")).strip(),
+            "standard": str(skill.get("standard", "")).strip(),
+            "self_improving": bool(skill.get("self_improving", False)),
+            "last_refined_at": str(skill.get("last_refined_at", "")).strip(),
+            "evaluation_notes": str(skill.get("evaluation_notes", "")).strip(),
+            "hub_url": str(skill.get("hub_url", "")).strip(),
         }
     normalized[CUSTOM_SKILLS_CONFIG_KEY] = cleaned
     return normalized
@@ -199,6 +209,7 @@ def init_workspace(base_dir: str | None = None) -> dict[str, Any]:
         ws / "sessions",
         ws / "chroma_db",
         ws / "logs",
+        ws / SKILL_HUB_DIR_NAME,
     ]
     for d in dirs:
         if not d.exists():
@@ -415,6 +426,15 @@ def set_custom_skill(
         "version": str(skill.get("version", "")).strip() or "1.0.0",
         "created_at": str(skill.get("created_at", "")).strip() or now,
         "updated_at": now,
+        "examples": list(skill.get("examples", []) or []),
+        "capabilities": list(skill.get("capabilities", []) or []),
+        "tags": list(skill.get("tags", []) or []),
+        "source": str(skill.get("source", "")).strip(),
+        "standard": str(skill.get("standard", "")).strip(),
+        "self_improving": bool(skill.get("self_improving", False)),
+        "last_refined_at": str(skill.get("last_refined_at", "")).strip(),
+        "evaluation_notes": str(skill.get("evaluation_notes", "")).strip(),
+        "hub_url": str(skill.get("hub_url", "")).strip(),
     }
     normalized[CUSTOM_SKILLS_CONFIG_KEY] = skills
     return normalized
@@ -479,3 +499,72 @@ def import_custom_skill_pack(
     if not skill:
         raise ValueError("Imported skill pack requires a skill payload")
     return import_custom_skill(config, skill)
+
+
+def get_skill_hub_path(base_dir: str | None = None) -> Path:
+    return get_workspace_path(base_dir) / SKILL_HUB_DIR_NAME
+
+
+def publish_skill_pack(
+    config: dict[str, Any],
+    name: str,
+    *,
+    metadata: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    skill = get_custom_skill(config, name)
+    if not skill:
+        raise ValueError(f"No custom skill named '{name}'")
+    ws = get_workspace_path()
+    hub = get_skill_hub_path()
+    hub.mkdir(parents=True, exist_ok=True)
+    published_at = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
+    pack = {
+        "format": "limbi-skill-pack",
+        "published_at": published_at,
+        "metadata": metadata or {},
+        "manifest": {
+            "name": skill.get("name", name),
+            "version": skill.get("version", "1.0.0"),
+            "provider": skill.get("provider", ""),
+            "model": skill.get("model", ""),
+            "base_url": skill.get("base_url", ""),
+            "description": skill.get("description", ""),
+            "standard": skill.get("standard", "agentskills.io-compatible"),
+        },
+        "skill": dict(skill),
+        "workspace": str(ws),
+    }
+    file_name = f"{skill.get('name', name)}-{skill.get('version', '1.0.0')}.json"
+    pack_path = hub / file_name
+    pack_path.write_text(json.dumps(pack, indent=2, ensure_ascii=False) + "\n", encoding="utf-8")
+    return {
+        "message": f"Published skill pack '{skill.get('name', name)}'",
+        "pack_path": str(pack_path),
+        "pack": pack,
+    }
+
+
+def list_skill_hub(base_dir: str | None = None) -> list[dict[str, Any]]:
+    hub = get_skill_hub_path(base_dir)
+    if not hub.exists():
+        return []
+    items: list[dict[str, Any]] = []
+    for path in sorted(hub.glob("*.json")):
+        try:
+            payload = json.loads(path.read_text(encoding="utf-8"))
+        except Exception:
+            continue
+        if isinstance(payload, dict):
+            manifest = payload.get("manifest") if isinstance(payload.get("manifest"), dict) else {}
+            items.append(
+                {
+                    "path": str(path),
+                    "name": str((manifest or {}).get("name") or path.stem),
+                    "version": str((manifest or {}).get("version") or ""),
+                    "provider": str((manifest or {}).get("provider") or ""),
+                    "model": str((manifest or {}).get("model") or ""),
+                    "description": str((manifest or {}).get("description") or ""),
+                    "published_at": str(payload.get("published_at") or ""),
+                }
+            )
+    return items

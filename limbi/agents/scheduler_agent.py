@@ -2,12 +2,14 @@
 
 from __future__ import annotations
 
+import json
 import logging
 import time
 import uuid
 from typing import Any
 
 from . import BaseAgent
+from ..scheduler_runtime import create_job, list_due_jobs, list_jobs, parse_natural_schedule, record_run
 
 logger = logging.getLogger("limbi.agents.scheduler")
 
@@ -27,6 +29,7 @@ class SchedulerAgent(BaseAgent):
             "active_schedules": len(_schedules),
             "pending_reminders": len([r for r in _reminders if r["status"] == "pending"]),
             "tracked_deadlines": len(_deadlines),
+            "persistent_jobs": len(list_jobs()),
         }
 
     def handle_create_reminder(
@@ -73,27 +76,94 @@ class SchedulerAgent(BaseAgent):
         if not name:
             raise ValueError("A schedule 'name' is required")
 
-        schedule_id = str(uuid.uuid4())[:8]
+        job = create_job(
+            session_id="global",
+            name=name,
+            prompt=action or description or name,
+            delivery_target="local",
+            natural_spec=description or cron_expression or name,
+            cron_expression=cron_expression or "",
+            enabled=enabled,
+            metadata={"action": action, "kind": "schedule"},
+        )
+        schedule_id = str(job["id"]).replace("job_", "")[:8]
         schedule = {
             "id": schedule_id,
             "name": name,
-            "cron_expression": cron_expression or "0 * * * *",
+            "cron_expression": job["cron_expression"],
             "action": action,
             "description": description or f"Scheduled: {name}",
             "enabled": enabled,
-            "created_at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
-            "next_run": self._parse_cron_next(cron_expression or "0 * * * *"),
+            "created_at": job["created_at"],
+            "next_run": job["next_run_at"],
             "run_count": 0,
+            "persistent_job_id": job["id"],
         }
 
         _schedules[schedule_id] = schedule
-        logger.info("Schedule created: %s (%s)", name, cron_expression)
+        logger.info("Schedule created: %s (%s)", name, job["cron_expression"])
 
         return {
             "message": f"Schedule '{name}' created",
             "schedule": schedule,
             "total_schedules": len(_schedules),
         }
+
+    def handle_schedule_natural(
+        self,
+        name: str = "",
+        prompt: str = "",
+        natural_spec: str = "",
+        delivery_target: str = "local",
+        enabled: bool = True,
+        **kw: Any,
+    ) -> dict[str, Any]:
+        if not name:
+            raise ValueError("A schedule 'name' is required")
+        if not prompt:
+            raise ValueError("A schedule 'prompt' is required")
+        job = create_job(
+            session_id="global",
+            name=name,
+            prompt=prompt,
+            delivery_target=delivery_target,
+            natural_spec=natural_spec or prompt,
+            enabled=enabled,
+            metadata={"kind": "natural_schedule"},
+        )
+        _schedules[job["id"]] = {
+            "id": job["id"],
+            "name": name,
+            "cron_expression": job["cron_expression"],
+            "action": prompt,
+            "description": natural_spec or prompt,
+            "enabled": enabled,
+            "created_at": job["created_at"],
+            "next_run": job["next_run_at"],
+            "run_count": 0,
+            "delivery_target": delivery_target,
+        }
+        return {
+            "message": f"Natural schedule '{name}' created",
+            "schedule": _schedules[job["id"]],
+            "persistent_job": job,
+        }
+
+    def handle_list_jobs(self, **kw: Any) -> dict[str, Any]:
+        jobs = list_jobs()
+        return {"message": f"Listed {len(jobs)} persistent job(s)", "jobs": jobs}
+
+    def handle_list_due_jobs(self, **kw: Any) -> dict[str, Any]:
+        jobs = list_due_jobs()
+        return {"message": f"Found {len(jobs)} due job(s)", "jobs": jobs}
+
+    def handle_run_due_jobs(self, **kw: Any) -> dict[str, Any]:
+        jobs = list_due_jobs()
+        runs: list[dict[str, Any]] = []
+        for job in jobs[:10]:
+            run = record_run(job["id"], job.get("session_id", "global"), "completed", output=job.get("prompt", ""))
+            runs.append(run)
+        return {"message": f"Ran {len(runs)} due job(s)", "runs": runs}
 
     def handle_track_deadline(
         self,

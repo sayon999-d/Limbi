@@ -1,7 +1,7 @@
 
 from __future__ import annotations
 
-__version__ = "1.6.2"
+__version__ = "1.6.3"
 __author__ = "Sayon Manna"
 
 from limbi.agents import (  
@@ -84,6 +84,7 @@ from limbi.agents import (
     project_management_agent,
     context_memory_agent,
     mutation_agent,
+    execution_backend_agent,
 )
 
 

@@ -174,6 +174,12 @@ _ROUTING_TABLE: dict[str, dict[str, Any]] = {
         "keywords": ["schedule", "reminder", "deadline", "calendar", "cron", "estimate time", "recurring"],
         "confidence_boost": 0.2,
     },
+    "execution_backend": {
+        "agent": "execution_backend_agent",
+        "suggested_action": "recommend_backend",
+        "keywords": ["backend", "execution backend", "docker", "ssh", "modal", "daytona", "vercel sandbox", "singularity", "runtime backend"],
+        "confidence_boost": 0.22,
+    },
     "files": {
         "agent": "file_agent",
         "suggested_action": "list_directory",

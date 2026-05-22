@@ -82,6 +82,7 @@ import agents.qa_agent
 import agents.security_agent
 import agents.database_agent
 import agents.scheduler_agent
+import agents.execution_backend_agent
 import agents.file_agent
 import agents.swarm_agent
 import agents.browser_agent

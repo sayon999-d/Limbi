@@ -4,11 +4,15 @@ from __future__ import annotations
 
 import logging
 import os
-import subprocess
-import shlex
 from typing import Any
 
 from . import BaseAgent
+from ..execution_backends import (
+    build_backend_plan,
+    get_execution_backend,
+    list_execution_backends,
+    recommend_execution_backend,
+)
 
 logger = logging.getLogger("limbi.agents.devops")
 
@@ -21,6 +25,18 @@ class DevOpsAgent(BaseAgent):
             "status": "ready",
             "vercel_configured": bool(os.getenv("VERCEL_TOKEN")),
             "aws_configured": bool(os.getenv("AWS_ACCESS_KEY_ID")),
+            "backend_catalog": len(list_execution_backends()),
+            "capabilities": [
+                "deploy_branch",
+                "rollback",
+                "check_status",
+                "list_environments",
+                "run_pipeline",
+                "list_backends",
+                "select_backend",
+                "recommend_backend",
+                "build_backend_plan",
+            ],
         }
 
     def handle_deploy_branch(
@@ -92,3 +108,18 @@ class DevOpsAgent(BaseAgent):
             "status": "triggered",
             "run_id": "run-20260404-001",
         }
+
+    def handle_list_backends(self, **kwargs: Any) -> dict[str, Any]:
+        return {"message": "Listed execution backends", "backends": list_execution_backends()}
+
+    def handle_select_backend(self, backend: str = "", **kwargs: Any) -> dict[str, Any]:
+        profile = get_execution_backend(backend)
+        if not profile:
+            raise ValueError(f"Unknown backend '{backend}'")
+        return {"message": f"Selected backend '{profile['name']}'", "backend": profile}
+
+    def handle_recommend_backend(self, task_text: str = "", **kwargs: Any) -> dict[str, Any]:
+        return {"message": "Recommended backend", "backend": recommend_execution_backend(task_text)}
+
+    def handle_build_backend_plan(self, task_text: str = "", backend: str = "", **kwargs: Any) -> dict[str, Any]:
+        return build_backend_plan(task_text, backend_name=backend)

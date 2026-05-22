@@ -8,8 +8,8 @@
   <br/><br/>
 
   [![Python 3.11+](https://img.shields.io/badge/Python-3.11%2B-3776AB?style=for-the-badge&logo=python&logoColor=white)](https://www.python.org/)
-  [![Agents](https://img.shields.io/badge/Agents-89-00B894?style=for-the-badge)](#agent-catalog)
-  [![Actions](https://img.shields.io/badge/Actions-435-0984E3?style=for-the-badge)](#agent-catalog)
+  [![Agents](https://img.shields.io/badge/Agents-90-00B894?style=for-the-badge)](#agent-catalog)
+  [![Actions](https://img.shields.io/badge/Actions-469-0984E3?style=for-the-badge)](#agent-catalog)
   [![Apache 2.0](https://img.shields.io/badge/License-Apache_2.0-6C5CE7?style=for-the-badge)](LICENSE)
 </div>
 
@@ -30,20 +30,28 @@ What was added:
 - A shorter terminal command surface so the banner and quick help only show the commands
   most people actually need during normal use.
 - A custom skill system with `/skills`, `/skill`, update, and delete support.
+- A self-learning skill path with approval-gated skill creation, skill refinement, and a
+  local skill hub for publishing packs.
 - Skill configs that can inherit the current provider, or pin their own provider/model.
 - Saved custom skills in `.limbi/config.json` for later reuse.
 - A safer skill runner that borrows the chosen runtime for the task and then restores the
   original shell selection.
+- Graph-backed session memory with episodic logs and a persistent user model that survives
+  restarts.
 - Better source-grounded URL research for prompts that include links.
 - Direct internet research for prompts without URLs, with live Google or DuckDuckGo search
   paths selected automatically from the prompt.
-- Graph-backed shared session memory that links related turns, agent results, and follow-up
-  work across the session.
+- Browser automation helpers for page fetch, search, screenshot, click, type, and form fill.
+- A durable task board for delegated workstreams with heartbeats and zombie detection.
+- Persistent scheduler storage for natural-language cron-like jobs and unattended runs.
+- Execution backend catalogs for local, Docker, SSH, Singularity, Modal, Daytona, and
+  Vercel Sandbox style execution targets.
 - A tighter rolling context window so repeated turns are compressed instead of replayed
   over and over.
 - Research answer repair so Limbi can rewrite accidental internal registry dumps into a
   topic-based answer when the prompt was meant to be research.
 - Adaptive runtime budgeting so simple tasks stay light and harder tasks get more room.
+- One-line bootstrap scripts for Linux, macOS, WSL2, and Windows-style environment checks.
 
 What changed:
 
@@ -51,23 +59,28 @@ What changed:
 - Manual provider and model selection stays available, but the default flow is less noisy.
 - API keys are reused from workspace storage instead of being re-entered every time.
 - Custom skills can be created, updated, listed, and removed from inside the terminal.
+- Custom skills can be refined over time, published locally, and shared as skill packs.
 - Internet research now chooses a visible search path, then fetches and summarizes the top
   pages before answering.
-- Session memory is no longer only linear. Limbi now uses graph-linked context so related
-  work is easier to recall and share across agents.
+- Session memory is no longer only linear. Limbi now uses graph-linked context and
+  episodic logs so related work is easier to recall and share across agents.
 - The running context is compacted more aggressively so the prompt window stays lighter and
   less repetitive.
 - Research prompts are filtered so Limbi answers the topic instead of dumping internal
   agent registry text.
 - The release flow has been kept explicit so version bumps stay predictable.
+- Delegated tasks now get durable task board records with heartbeats and zombie detection.
+- Browser tasks can fetch, search, click, type, and capture screenshots from dynamic sites.
+- Scheduler and execution backend choices are persisted, inspectable, and reusable.
+- The repo now includes bootstrap scripts to check Python, Node, ripgrep, ffmpeg, and Git.
 
 In short: Limbi now tries harder to stay useful across longer sessions, not just within
 one single prompt.
 
 Current system size:
 
-- 89 registered agents
-- 435 available agent actions
+- 90 registered agents
+- 469 available agent actions
 - 19 supported LLM provider modes
 - CLI, Python API, FastAPI backend, MCP server, and VS Code extension support
 
@@ -389,6 +402,7 @@ These agents support infrastructure, deployment, observability, cloud, Kubernete
 | `feature_flag_agent` | Creates, toggles, lists, and evaluates feature flags. |
 | `notification_agent` | Supports notification and message delivery workflows. |
 | `scheduler_agent` | Supports scheduling and calendar-style coordination. |
+| `execution_backend_agent` | Recommends and catalogs execution backends such as local, Docker, SSH, Modal, Daytona, and Vercel Sandbox. |
 | `os_agent` | Supports operating-system-oriented tasks. |
 | `browser_agent` | Supports browser-oriented tasks and web interaction workflows. |
 | `web_scraping_agent` | Fetches pages, extracts links, inspects forms, and summarizes web content. |
@@ -832,6 +846,17 @@ Use `/agent` when you want to manually choose one registered agent and run one o
 
 Use `/keys` when you want to manage stored provider keys. This is the persistent key store for Limbi. Once saved, the key stays available in `.limbi/config.json` until you delete it.
 
+The custom skill manager can:
+
+- create and update skills
+- delete skills you no longer need
+- export a single skill or a skill pack
+- import a skill or skill pack
+- publish a skill pack into the local `.limbi/skill_hub/` folder
+
+Skills keep metadata for provider, model, tags, examples, and the open `agentskills.io`-style
+manifest fields so they can grow into a more shareable format over time.
+
 These commands do not replace the normal orchestrator. They sit beside it, so you can keep the automatic workflow for normal prompts and switch to manual control only when you need it.
 
 You can use the Up and Down arrow keys to move through the `/models` and `/agent` selection screens, then press Enter to confirm.
@@ -911,6 +936,34 @@ export LIMBI_CORS_ORIGINS="http://127.0.0.1:8000,http://localhost:8000"
 ```
 
 If you are only using Limbi on your own machine, you can leave `LIMBI_API_KEY` empty and keep the default localhost origins.
+
+## Bootstrap
+
+Limbi includes a small bootstrap checker for setting up a new machine or verifying a fresh environment.
+
+Use it like this:
+
+```bash
+python scripts/bootstrap.py
+```
+
+It checks for:
+
+- Python 3.11+
+- Git
+- ripgrep
+- ffmpeg
+- Node.js and npm
+
+There are also convenience wrappers:
+
+```bash
+bash scripts/install.sh
+powershell -File scripts/install.ps1
+```
+
+The bootstrap script does not modify your system automatically. It prints the missing tools and the
+most obvious install path for the current platform, which keeps the setup step safe and predictable.
 
 ## Python API
 

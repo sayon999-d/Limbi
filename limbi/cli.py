@@ -183,7 +183,7 @@ _LOW_MEMORY_LOCAL_MODELS = {
 }
 
 _OLLAMA_CLOUD_MODELS = [
-    "deepseek-v3.1.6.2b-cloud",
+    "deepseek-v3.1.6.3b-cloud",
     "qwen3-coder:480b-cloud",
     "gpt-oss:120b-cloud",
     "gpt-oss:20b-cloud",
@@ -200,32 +200,61 @@ def _get_console():
     return Console()
 
 
-def _print_banner(console):
-    from rich.panel import Panel
+def _build_limbi_logo():
     from rich.text import Text
 
-    banner = Text()
-    banner.append("Limbi", style="bold orange1")
-    banner.append(" v1.6.2", style="bold white")
-    banner.append(" - Omni-Agent Orchestrator\n")
-    banner.append("Type your prompt, or ", style="white")
-    banner.append("/models", style="bold orange1")
-    banner.append(", ", style="white")
-    banner.append("/skills", style="bold orange1")
-    banner.append(", ", style="white")
-    banner.append("/agent", style="bold orange1")
-    banner.append(", or ", style="white")
-    banner.append("/agents", style="bold orange1")
-    banner.append(", ", style="white")
-    banner.append("/keys", style="bold orange1")
-    banner.append(", ", style="white")
-    banner.append("/help", style="bold orange1")
-    banner.append(" or ", style="white")
-    banner.append("/quit", style="bold orange1")
-    banner.append(".\n", style="white")
-    banner.append("Use Up/Down and Enter in selection screens.", style="white")
+    logo = Text()
+    art = [
+        "╭───────╮",
+        "│ █     │",
+        "│ █     │",
+        "│ ████  │",
+        "╰───────╯",
+    ]
+    for index, line in enumerate(art):
+        logo.append(line, style="bold bright_green")
+        if index < len(art) - 1:
+            logo.append("\n")
+    return logo
 
-    console.print(Panel(banner, border_style="orange1", padding=(0, 2)))
+
+def _print_banner(console):
+    from rich.panel import Panel
+    from rich.table import Table
+    from rich.text import Text
+
+    title = Text()
+    title.append("LIMBI", style="bold bright_green")
+    title.append(" v1.6.3", style="bold white")
+    title.append(" - Omni-Agent Orchestrator", style="white")
+
+    help_line = Text()
+    help_line.append("Type your prompt, or ", style="white")
+    help_line.append("/models", style="bold bright_green")
+    help_line.append(", ", style="white")
+    help_line.append("/skills", style="bold bright_green")
+    help_line.append(", ", style="white")
+    help_line.append("/agent", style="bold bright_green")
+    help_line.append(", or ", style="white")
+    help_line.append("/agents", style="bold bright_green")
+    help_line.append(", ", style="white")
+    help_line.append("/keys", style="bold bright_green")
+    help_line.append(", ", style="white")
+    help_line.append("/help", style="bold bright_green")
+    help_line.append(" or ", style="white")
+    help_line.append("/quit", style="bold bright_green")
+    help_line.append(".", style="white")
+
+    help_hint = Text("Use Up/Down and Enter in selection screens.", style="white")
+
+    grid = Table.grid(expand=True, padding=(0, 1))
+    grid.add_column(width=11, no_wrap=True)
+    grid.add_column(ratio=1)
+    grid.add_row(_build_limbi_logo(), title)
+    grid.add_row("", help_line)
+    grid.add_row("", help_hint)
+
+    console.print(Panel(grid, border_style="bright_green", padding=(0, 2)))
 
 
 def _read_menu_key() -> str:
@@ -313,7 +342,7 @@ def _select_from_menu(console, title: str, choices: list[Any], default_index: in
     index = max(0, min(default_index, len(choices) - 1))
     while True:
         console.clear()
-        console.print(f"[bold bright_cyan]{title}[/]")
+        console.print(f"[bold bright_green]{title}[/]")
         if help_text:
             console.print(f"[dim]{help_text}[/]")
         console.print()
@@ -343,13 +372,13 @@ def _print_agent_table(console):
     agents = list_agents()
     table = Table(
         title="Registered Agents",
-        title_style="bold orange1",
-        border_style="orange1",
+        title_style="bold bright_green",
+        border_style="bright_green",
         show_lines=False,
         padding=(0, 1),
     )
     table.add_column("Agent", style="bold white", min_width=25)
-    table.add_column("Actions", style="orange1")
+    table.add_column("Actions", style="bright_green")
     table.add_column("#", justify="right", style="white")
 
     for name, actions in sorted(agents.items()):
@@ -371,7 +400,7 @@ def _print_providers(console):
 
     table = Table(
         title="Supported Providers",
-        border_style="orange1",
+        border_style="bright_green",
         show_lines=False,
     )
     table.add_column("Provider", style="bold white")
@@ -391,11 +420,11 @@ def _print_model_choices(console):
 
     table = Table(
         title="Model / Provider Choices",
-        border_style="orange1",
+        border_style="bright_green",
         show_lines=False,
     )
     table.add_column("Provider", style="bold white")
-    table.add_column("Default Model", style="orange1")
+    table.add_column("Default Model", style="bright_green")
     table.add_column("Endpoint", style="dim")
     table.add_column("Key", style="dim")
     for provider, meta in _PROVIDER_CHOICES.items():
@@ -763,7 +792,7 @@ def _print_custom_skills(console, state: dict[str, Any]) -> None:
     skills = get_custom_skills(state["ws_config"])
     table = Table(
         title="Saved Custom Skills",
-        border_style="orange1",
+        border_style="bright_green",
         show_lines=False,
         padding=(0, 1),
     )
@@ -893,7 +922,7 @@ def _save_custom_skill(
             f"[green]Saved custom skill:[/] [bold]{saved.get('name', _normalize_custom_skill_name(name))}[/]\n"
             f"[dim]Runtime:[/] { _custom_skill_runtime_summary(saved, state) }\n"
             f"[dim]Instruction:[/] {saved.get('instruction', '')[:200]}",
-            border_style="orange1",
+            border_style="bright_green",
             title="Custom Skill Saved",
             padding=(1, 2),
         )
@@ -1038,12 +1067,12 @@ def _run_evaluation_suite(state: dict[str, Any], console) -> None:
 
     from limbi.evaluation import run_evaluation_suite
 
-    console.print("[bold orange1]Running evaluation suite...[/]")
+    console.print("[bold bright_green]Running evaluation suite...[/]")
     result = asyncio.run(run_evaluation_suite())
     benchmark = result.get("benchmark", {})
     cases = result.get("cases", [])
 
-    table = Table(title="Evaluation Results", border_style="orange1", show_lines=False)
+    table = Table(title="Evaluation Results", border_style="bright_green", show_lines=False)
     table.add_column("Case", style="bold white")
     table.add_column("Status", style="white")
     table.add_column("Score", justify="right", style="white")
@@ -1063,8 +1092,8 @@ def _run_evaluation_suite(state: dict[str, Any], console) -> None:
             f"Passed: {benchmark.get('passed', 0)}   "
             f"Skipped: {benchmark.get('skipped', 0)}   "
             f"Failed: {benchmark.get('failed', 0)}",
-            title="[bold orange1]Benchmark[/]",
-            border_style="orange1",
+            title="[bold bright_green]Benchmark[/]",
+            border_style="bright_green",
             padding=(0, 1),
         )
     )
@@ -1075,7 +1104,7 @@ def _print_permission_policy(console, state: dict[str, Any]) -> None:
     from limbi.workspace import get_permission_policy
 
     policy = get_permission_policy(state.get("ws_config", {}))
-    table = Table(title="Permission Policy", border_style="orange1")
+    table = Table(title="Permission Policy", border_style="bright_green")
     table.add_column("Scope", style="bold white")
     table.add_column("Actor", style="white")
     table.add_column("Mode", style="white")
@@ -1093,7 +1122,7 @@ def _print_recent_traces(console, limit: int = 10) -> None:
     from limbi.tracing import list_traces
 
     traces = list_traces(limit=limit)
-    table = Table(title="Recent Traces", border_style="orange1", show_lines=False)
+    table = Table(title="Recent Traces", border_style="bright_green", show_lines=False)
     table.add_column("Trace ID", style="bold white")
     table.add_column("Route", style="white")
     table.add_column("Status", style="white")
@@ -1141,11 +1170,11 @@ def _print_trace_detail(console, trace_id: str) -> None:
     header.add_row("Sources", str(int(trace.get("research_source_count") or 0)))
     header.add_row("Prompt", str(trace.get("prompt") or ""))
 
-    console.print(Panel(header, title="[bold orange1]Trace[/]", border_style="orange1", padding=(1, 2)))
+    console.print(Panel(header, title="[bold bright_green]Trace[/]", border_style="bright_green", padding=(1, 2)))
 
     events = trace.get("events") or []
     if events:
-        table = Table(title="Trace Events", border_style="orange1", show_lines=False)
+        table = Table(title="Trace Events", border_style="bright_green", show_lines=False)
         table.add_column("Time", style="dim")
         table.add_column("Kind", style="bold white")
         table.add_column("Status", style="white")
@@ -1380,7 +1409,7 @@ def _run_manual_agent(state: dict[str, Any], console) -> None:
         Panel(
             Syntax(json.dumps(result.to_dict(), indent=2), "json", word_wrap=True),
             title=f"{agent_name}.{action}",
-            border_style="orange1" if result.success else "red",
+            border_style="bright_green" if result.success else "red",
             padding=(1, 2),
         )
     )
@@ -1472,7 +1501,7 @@ async def _status_ticker(status, stop_event: asyncio.Event, status_state: dict[s
         stage = str(status_state.get("message") or "Thinking").strip()
         if not stage:
             stage = "Thinking"
-        status.update(f"[bold orange1]{stage}... {elapsed:.1f}s[/]")
+        status.update(f"[bold bright_green]{stage}... {elapsed:.1f}s[/]")
         try:
             await asyncio.sleep(0.8)
         except asyncio.CancelledError:
@@ -1491,7 +1520,7 @@ async def _send_message(state, message: str, console) -> None:
         if clean:
             status_state["message"] = clean
 
-    with console.status("[bold orange1]Thinking...[/]", spinner="dots") as status:
+    with console.status("[bold bright_green]Thinking...[/]", spinner="dots") as status:
         ticker = asyncio.create_task(_status_ticker(status, stop_event, status_state))
         try:
             _ensure_runtime_api_key(state, console)
@@ -1511,8 +1540,8 @@ async def _send_message(state, message: str, console) -> None:
         console.print(
             Panel(
                 Markdown(text),
-                title="[bold orange1]Limbi[/]",
-                border_style="orange1",
+                title="[bold bright_green]Limbi[/]",
+                border_style="bright_green",
                 padding=(1, 2),
             )
         )
@@ -1523,7 +1552,7 @@ async def _send_message(state, message: str, console) -> None:
             agent = d.get("agent", "?")
             action = d.get("action", "?")
             msg = d.get("data", {}).get("message", d.get("error", ""))
-            console.print(f"  {status} [bold]{agent}[/].[cyan]{action}[/] -> {msg}")
+            console.print(f"  {status} [bold]{agent}[/].[green]{action}[/] -> {msg}")
         console.print()
 
     visible_errors = [e for e in errors if not _is_parser_noise(e)]
@@ -1537,22 +1566,22 @@ async def _send_message(state, message: str, console) -> None:
         from rich.text import Text
 
         summary = Text()
-        summary.append("hallucination: ", style="bold orange1")
+        summary.append("hallucination: ", style="bold bright_green")
         summary.append(f"{metrics.get('estimated_hallucination_risk_percent', 0)}%", style="white")
         summary.append("    ", style="white")
-        summary.append("latency: ", style="bold orange1")
+        summary.append("latency: ", style="bold bright_green")
         summary.append(f"{metrics.get('latency_s', 0):.2f}s", style="white")
         summary.append("    ", style="white")
-        summary.append("token usage: ", style="bold orange1")
+        summary.append("token usage: ", style="bold bright_green")
         summary.append(str(metrics.get('total_tokens', 0)), style="white")
         summary.append("    ", style="white")
-        summary.append("complexity: ", style="bold orange1")
+        summary.append("complexity: ", style="bold bright_green")
         summary.append(str(metrics.get("task_complexity", "moderate")), style="white")
         summary.append("    ", style="white")
-        summary.append("budget: ", style="bold orange1")
+        summary.append("budget: ", style="bold bright_green")
         summary.append(str(metrics.get("runtime_token_budget", 0)), style="white")
         summary.append("    ", style="white")
-        summary.append("route: ", style="bold orange1")
+        summary.append("route: ", style="bold bright_green")
         summary.append(str(metrics.get("task_route", "direct")), style="white")
         route_confidence = metrics.get("route_confidence")
         if route_confidence is not None:
@@ -1565,24 +1594,24 @@ async def _send_message(state, message: str, console) -> None:
         effective_model = str(metrics.get("effective_model", "")).strip()
         if effective_model:
             summary.append("    ", style="white")
-            summary.append("model: ", style="bold orange1")
+            summary.append("model: ", style="bold bright_green")
             summary.append(effective_model, style="white")
         trace_id = str(metrics.get("trace_id", "")).strip()
         if trace_id:
             summary.append("    ", style="white")
-            summary.append("trace: ", style="bold orange1")
+            summary.append("trace: ", style="bold bright_green")
             summary.append(trace_id, style="white")
         search_path = str(metrics.get("search_path", "")).strip()
         if search_path:
             summary.append("    ", style="white")
-            summary.append("search: ", style="bold orange1")
+            summary.append("search: ", style="bold bright_green")
             summary.append(search_path, style="white")
         source_count = int(metrics.get("research_source_count", 0) or 0)
         if source_count:
             summary.append("    ", style="white")
-            summary.append("sources: ", style="bold orange1")
+            summary.append("sources: ", style="bold bright_green")
             summary.append(str(source_count), style="white")
-        console.print(Panel(summary, border_style="orange1", padding=(0, 1)))
+        console.print(Panel(summary, border_style="bright_green", padding=(0, 1)))
 
 
 def _repl(state, console):
@@ -1826,7 +1855,7 @@ Type a natural-language prompt to talk to Limbi.
     default=False,
     help="Skip workspace trust prompt (for CI/automation).",
 )
-@click.version_option(version="1.6.2", prog_name="limbi")
+@click.version_option(version="1.6.3", prog_name="limbi")
 def main(
     prompt: str | None,
     provider: str | None,
@@ -1876,7 +1905,7 @@ def main(
         from rich.text import Text
 
         welcome = Text()
-        welcome.append("Limbi workspace initialized!\n\n", style="bold bright_cyan")
+        welcome.append("Limbi workspace initialized!\n\n", style="bold bright_green")
         welcome.append(f"  Workspace:           {ws_result['workspace']}\n", style="")
         welcome.append("  config.json          ", style="dim")
         welcome.append("provider settings\n", style="dim italic")

@@ -17,6 +17,7 @@ from .payload_parser import ParsedOutput, parse_llm_output
 from .agents import get_agent, list_agents, AgentResult
 from .vector_store import VectorStore
 from .audit_log import log_execution, get_recent_executions
+from .task_board import start_task, heartbeat_task, finish_task
 from .agents.context_memory_agent import (
     publish_agent_result,
     get_session_context,
@@ -1657,14 +1658,32 @@ class Orchestrator:
         delegations: list[dict[str, Any]],
         progress_callback: Callable[[str], None] | None = None,
     ) -> list[dict[str, Any]]:
+        tracked: list[dict[str, Any]] = []
+        for delegation in delegations:
+            agent_name = str(delegation.get("agent", "unknown")).strip() or "unknown"
+            action = str(delegation.get("action", "unknown")).strip() or "unknown"
+            task_ref = start_task(
+                self._session_id,
+                agent_name,
+                action,
+                title=f"{agent_name}.{action}",
+                workstream_id=f"ws_{uuid.uuid4().hex[:8]}",
+                terminal_label=f"{agent_name}.{action}",
+                payload=delegation,
+            )
+            tracked_delegation = dict(delegation)
+            tracked_delegation["_task_ref"] = task_ref
+            tracked.append(tracked_delegation)
 
         tasks = [
-            self._execute_with_retry(d, progress_callback=progress_callback) for d in delegations
+            self._execute_with_retry(d, progress_callback=progress_callback) for d in tracked
         ]
         results = await asyncio.gather(*tasks, return_exceptions=True)
 
         final: list[dict[str, Any]] = []
         for i, result in enumerate(results):
+            task_ref = tracked[i].get("_task_ref", {})
+            task_id = str(task_ref.get("id") or "") if isinstance(task_ref, dict) else ""
             if isinstance(result, Exception):
                 agent_name = delegations[i].get("agent", "unknown")
                 action = delegations[i].get("action", "unknown")
@@ -1674,9 +1693,19 @@ class Orchestrator:
                     action=action,
                     error="Delegation execution failed",
                 )
-                final.append(error_result.to_dict())
+                payload = error_result.to_dict()
+                if task_id:
+                    payload["task_id"] = task_id
+                final.append(payload)
+                if task_id:
+                    finish_task(task_id, success=False, result=payload, note="delegation exception")
             else:
-                final.append(result.to_dict())
+                payload = result.to_dict()
+                if task_id:
+                    payload["task_id"] = task_id
+                final.append(payload)
+                if task_id:
+                    finish_task(task_id, success=result.success, result=payload, note=f"{result.agent}.{result.action}")
         return final
 
     async def _execute_with_retry(
@@ -1689,11 +1718,15 @@ class Orchestrator:
         agent_name = delegation.get("agent", "")
         action = delegation.get("action", "")
         params = delegation.get("params", {})
+        task_ref = delegation.get("_task_ref", {})
+        task_id = str(task_ref.get("id") or "") if isinstance(task_ref, dict) else ""
 
         last_error: str | None = None
         for attempt in range(max_retries):
             start_time = time.time()
             try:
+                if task_id:
+                    heartbeat_task(task_id, note=f"attempt {attempt + 1}/{max_retries}", status="running")
                 policy = load_config()
                 decision = evaluate_permission(policy, "agent_scopes", agent_name, action)
                 record_trace_event(
@@ -1717,12 +1750,15 @@ class Orchestrator:
                         status="error",
                         payload={"reason": decision.reason, "attempt": attempt + 1},
                     )
-                    return AgentResult(
+                    result = AgentResult(
                         success=False,
                         agent=agent_name,
                         action=action,
                         error=decision.reason or f"Agent scope blocked for {agent_name}",
                     )
+                    if task_id:
+                        finish_task(task_id, success=False, result=result.to_dict(), note="permission denied")
+                    return result
                 agent = get_agent(agent_name)
                 _emit_progress(progress_callback, f"Running {agent_name}.{action}")
                 result = await asyncio.to_thread(agent.execute, action, params)
@@ -1768,9 +1804,13 @@ class Orchestrator:
                         logger.info(
                             "%s.%s succeeded on attempt %d", agent_name, action, attempt + 1
                         )
+                    if task_id:
+                        finish_task(task_id, success=True, result=result.to_dict(), note=f"{agent_name}.{action}")
                     return result
 
                 if "Unknown action" in (result.error or ""):
+                    if task_id:
+                        finish_task(task_id, success=False, result=result.to_dict(), note="unknown action")
                     return result
 
                 last_error = result.error
@@ -1794,9 +1834,12 @@ class Orchestrator:
                     agent=agent_name, action=action, params=params,
                     success=False, error="Agent not found", duration_ms=duration,
                 )
-                return AgentResult(
+                result = AgentResult(
                     success=False, agent=agent_name, action=action, error="Agent not found"
                 )
+                if task_id:
+                    finish_task(task_id, success=False, result=result.to_dict(), note="agent not found")
+                return result
             except Exception as exc:
                 duration = (time.time() - start_time) * 1000
                 last_error = "Agent execution failed"
@@ -1816,17 +1859,22 @@ class Orchestrator:
                     "%s.%s exception (attempt %d/%d): %s",
                     agent_name, action, attempt + 1, max_retries, last_error,
                 )
+                if task_id:
+                    heartbeat_task(task_id, note=f"error: {last_error}", status="failed")
 
             if attempt < max_retries - 1:
                 wait = RETRY_BACKOFF_BASE * (2 ** attempt)
                 await asyncio.sleep(wait)
 
-        return AgentResult(
+        result = AgentResult(
             success=False,
             agent=agent_name,
             action=action,
             error=f"Failed after {max_retries} retries. Last error: {last_error}",
         )
+        if task_id:
+            finish_task(task_id, success=False, result=result.to_dict(), note="retries exhausted")
+        return result
 
     async def _manage_history(self) -> None:
 
