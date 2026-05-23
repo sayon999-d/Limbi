@@ -185,7 +185,7 @@ _LOW_MEMORY_LOCAL_MODELS = {
 }
 
 _OLLAMA_CLOUD_MODELS = [
-    "deepseek-v3.1.7.6b-cloud",
+    "deepseek-v3.1.7.7b-cloud",
     "qwen3-coder:480b-cloud",
     "gpt-oss:120b-cloud",
     "gpt-oss:20b-cloud",
@@ -227,7 +227,7 @@ def _print_banner(console):
 
     title = Text()
     title.append("LIMBI", style="bold bright_green")
-    title.append(" v1.7.6", style="bold white")
+    title.append(" v1.7.7", style="bold white")
     title.append(" - Omni-Agent Orchestrator", style="white")
 
     help_line = Text()
@@ -328,7 +328,6 @@ def _start_escape_watcher(stop_event: threading.Event) -> threading.Thread | Non
                         key = msvcrt.getwch()
                         if key == "\x1b":
                             stop_event.set()
-                            os.kill(os.getpid(), signal.SIGINT)
                             return
                     time.sleep(0.05)
                 return
@@ -348,7 +347,6 @@ def _start_escape_watcher(stop_event: threading.Event) -> threading.Thread | Non
                     char = sys.stdin.read(1)
                     if char == "\x1b":
                         stop_event.set()
-                        os.kill(os.getpid(), signal.SIGINT)
                         return
             finally:
                 termios.tcsetattr(fd, termios.TCSADRAIN, old_settings)
@@ -1719,6 +1717,11 @@ async def _status_ticker(status, stop_event: asyncio.Event, status_state: dict[s
             return
 
 
+async def _wait_for_escape(escape_stop: threading.Event) -> None:
+    while not escape_stop.is_set():
+        await asyncio.sleep(0.05)
+
+
 async def _send_message(state, message: str, console) -> None:
     from rich.markdown import Markdown
     from rich.panel import Panel
@@ -1735,9 +1738,23 @@ async def _send_message(state, message: str, console) -> None:
     with console.status("[bold bright_green]Thinking...[/]", spinner="dots") as status:
         ticker = asyncio.create_task(_status_ticker(status, stop_event, status_state))
         escape_watcher = _start_escape_watcher(escape_stop)
+        escape_task = asyncio.create_task(_wait_for_escape(escape_stop))
         try:
             _ensure_runtime_api_key(state, console)
-            result = await state["orchestrator"].chat(message, progress_callback=_update_progress)
+            chat_task = asyncio.create_task(
+                state["orchestrator"].chat(message, progress_callback=_update_progress)
+            )
+            done, pending = await asyncio.wait(
+                {chat_task, escape_task},
+                return_when=asyncio.FIRST_COMPLETED,
+            )
+            if escape_task in done and not chat_task.done():
+                chat_task.cancel()
+                console.print("\n[yellow]Cancelled.[/] Returning to the prompt.\n")
+                with contextlib.suppress(asyncio.CancelledError):
+                    await chat_task
+                return
+            result = await chat_task
         except KeyboardInterrupt:
             console.print("\n[yellow]Cancelled.[/] Returning to the prompt.\n")
             return
@@ -1745,8 +1762,11 @@ async def _send_message(state, message: str, console) -> None:
             stop_event.set()
             escape_stop.set()
             ticker.cancel()
+            escape_task.cancel()
             with contextlib.suppress(asyncio.CancelledError):
                 await ticker
+            with contextlib.suppress(asyncio.CancelledError):
+                await escape_task
             if escape_watcher is not None:
                 escape_watcher.join(timeout=0.2)
 
@@ -2078,7 +2098,7 @@ Type a natural-language prompt to talk to Limbi.
     default=False,
     help="Skip workspace trust prompt (for CI/automation).",
 )
-@click.version_option(version="1.7.6", prog_name="limbi")
+@click.version_option(version="1.7.7", prog_name="limbi")
 def main(
     prompt: str | None,
     provider: str | None,
