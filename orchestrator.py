@@ -73,6 +73,7 @@ You can BOTH:
 - If file paths, output targets, runtime targets, or provider details are missing and
   there is no safe default, ask a single focused question instead of multiple questions.
 - If a needed capability is missing, use `mutation_agent` to propose a new agent only after the user approves.
+- For create/write/save tasks, do not only describe the work; either emit a delegation block for file/code actions or provide the final source in a fenced code block with a filename so Limbi can persist it.
 
 ## How Delegation Works
 When you decide an action needs to be executed in the real world, include a \
@@ -146,6 +147,9 @@ def _needs_clarification(user_message: str) -> list[str]:
     has_vague_language = any(word in text for word in vague_words)
     has_path_context = any(word in text for word in path_words)
 
+    if len(text) <= 3 and len(words) <= 1 and not _extract_urls(user_message):
+        return ["What exactly would you like me to do?"]
+
     if has_research_intent and len(words) <= 14:
         return []
 
@@ -161,6 +165,18 @@ def _needs_clarification(user_message: str) -> list[str]:
         return ["Where should I place the output in the workspace?"]
 
     return []
+
+
+def _is_tiny_prompt(user_message: str) -> bool:
+    text = (user_message or "").strip()
+    if not text:
+        return False
+    if len(text) <= 3 and not _extract_urls(text):
+        return True
+    words = text.split()
+    if len(words) == 1 and len(text) <= 4 and not any(ch.isdigit() for ch in text):
+        return True
+    return False
 
 def _build_agent_registry_text(compact: bool = False) -> str:
 
@@ -480,7 +496,7 @@ def _suggest_runtime_limits(level: str, base_max_tokens: int, base_temperature: 
     base_temperature = max(0.0, float(base_temperature or 0.1))
 
     if level == "simple":
-        max_tokens = min(base_max_tokens, 256)
+        max_tokens = min(base_max_tokens, 192)
         temperature = min(base_temperature, 0.05)
     elif level == "complex":
         max_tokens = min(max(base_max_tokens, 1024), 1536)
@@ -1097,6 +1113,8 @@ class Orchestrator:
         )
 
         clarification_questions = _needs_clarification(user_message)
+        if _is_tiny_prompt(user_message) and not clarification_questions:
+            clarification_questions = ["What exactly would you like me to do?"]
         if clarification_questions:
             final_text = "\n".join(f"- {q}" for q in clarification_questions)
             finish_trace(status="clarification", final_answer=final_text)
@@ -1431,6 +1449,8 @@ class Orchestrator:
         )
 
         clarification_questions = _needs_clarification(user_message)
+        if _is_tiny_prompt(user_message) and not clarification_questions:
+            clarification_questions = ["What exactly would you like me to do?"]
         if clarification_questions:
             final_text = "\n".join(f"- {q}" for q in clarification_questions)
             finish_trace(status="clarification", final_answer=final_text)
@@ -1870,7 +1890,6 @@ class Orchestrator:
                     },
                 )
 
-                # ── Auto-publish result to the shared context memory bus ──
                 try:
                     publish_agent_result(
                         source_agent=agent_name,

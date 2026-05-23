@@ -4,9 +4,11 @@ import asyncio
 import contextlib
 import json
 import os
+import signal
 import sys
 import time
 import uuid
+import threading
 from pathlib import Path
 from typing import Any, Callable
 
@@ -183,7 +185,7 @@ _LOW_MEMORY_LOCAL_MODELS = {
 }
 
 _OLLAMA_CLOUD_MODELS = [
-    "deepseek-v3.1.6.7b-cloud",
+    "deepseek-v3.1.6.8b-cloud",
     "qwen3-coder:480b-cloud",
     "gpt-oss:120b-cloud",
     "gpt-oss:20b-cloud",
@@ -225,7 +227,7 @@ def _print_banner(console):
 
     title = Text()
     title.append("LIMBI", style="bold bright_green")
-    title.append(" v1.6.7", style="bold white")
+    title.append(" v1.6.8", style="bold white")
     title.append(" - Omni-Agent Orchestrator", style="white")
 
     help_line = Text()
@@ -310,6 +312,52 @@ def _read_menu_key() -> str:
         return key
     finally:
         termios.tcsetattr(fd, termios.TCSADRAIN, old_settings)
+
+
+def _start_escape_watcher(stop_event: threading.Event) -> threading.Thread | None:
+    if not sys.stdin.isatty():
+        return None
+
+    def _watch() -> None:
+        try:
+            if os.name == "nt":
+                import msvcrt
+
+                while not stop_event.is_set():
+                    if msvcrt.kbhit():
+                        key = msvcrt.getwch()
+                        if key == "\x1b":
+                            stop_event.set()
+                            os.kill(os.getpid(), signal.SIGINT)
+                            return
+                    time.sleep(0.05)
+                return
+
+            import select
+            import termios
+            import tty
+
+            fd = sys.stdin.fileno()
+            old_settings = termios.tcgetattr(fd)
+            try:
+                tty.setcbreak(fd)
+                while not stop_event.is_set():
+                    ready, _, _ = select.select([sys.stdin], [], [], 0.1)
+                    if not ready:
+                        continue
+                    char = sys.stdin.read(1)
+                    if char == "\x1b":
+                        stop_event.set()
+                        os.kill(os.getpid(), signal.SIGINT)
+                        return
+            finally:
+                termios.tcsetattr(fd, termios.TCSADRAIN, old_settings)
+        except Exception:
+            return
+
+    thread = threading.Thread(target=_watch, name="limbi-escape-watcher", daemon=True)
+    thread.start()
+    return thread
 
 
 def _render_menu_entry(entry: Any) -> str:
@@ -1551,6 +1599,7 @@ async def _send_message(state, message: str, console) -> None:
     from rich.panel import Panel
 
     stop_event = asyncio.Event()
+    escape_stop = threading.Event()
     status_state = {"message": "Planning task"}
 
     def _update_progress(stage: str) -> None:
@@ -1560,14 +1609,21 @@ async def _send_message(state, message: str, console) -> None:
 
     with console.status("[bold bright_green]Thinking...[/]", spinner="dots") as status:
         ticker = asyncio.create_task(_status_ticker(status, stop_event, status_state))
+        escape_watcher = _start_escape_watcher(escape_stop)
         try:
             _ensure_runtime_api_key(state, console)
             result = await state["orchestrator"].chat(message, progress_callback=_update_progress)
+        except KeyboardInterrupt:
+            console.print("\n[yellow]Cancelled.[/] Returning to the prompt.\n")
+            return
         finally:
             stop_event.set()
+            escape_stop.set()
             ticker.cancel()
             with contextlib.suppress(asyncio.CancelledError):
                 await ticker
+            if escape_watcher is not None:
+                escape_watcher.join(timeout=0.2)
 
     text = result.get("conversation_text", "").strip()
     delegations = result.get("delegations_executed", [])
@@ -1893,7 +1949,7 @@ Type a natural-language prompt to talk to Limbi.
     default=False,
     help="Skip workspace trust prompt (for CI/automation).",
 )
-@click.version_option(version="1.6.7", prog_name="limbi")
+@click.version_option(version="1.6.8", prog_name="limbi")
 def main(
     prompt: str | None,
     provider: str | None,

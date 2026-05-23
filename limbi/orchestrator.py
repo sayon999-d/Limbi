@@ -26,9 +26,9 @@ from .agents.context_memory_agent import (
     set_shared_state_value,
 )
 from .runtime_metrics import build_runtime_metrics
-from .permissions import evaluate_permission
+from .permissions import evaluate_permission, require_permission
 from .tracing import start_trace, record_trace_event, finish_trace
-from .workspace import load_config
+from .workspace import get_workspace_root, load_config
 
 logger = logging.getLogger("limbi.orchestrator")
 
@@ -71,6 +71,7 @@ You can BOTH:
 - If file paths, output targets, runtime targets, or provider details are missing and
   there is no safe default, ask a single focused question instead of multiple questions.
 - If a needed capability is missing, use `mutation_agent` to propose a new agent only after the user approves.
+- For create/write/save tasks, do not only describe the work; either emit a delegation block for file/code actions or provide the final source in a fenced code block with a filename so Limbi can persist it.
 
 ## How Delegation Works
 When you decide an action needs to be executed in the real world, include a \
@@ -144,6 +145,9 @@ def _needs_clarification(user_message: str) -> list[str]:
     has_vague_language = any(word in text for word in vague_words)
     has_path_context = any(word in text for word in path_words)
 
+    if len(text) <= 3 and len(words) <= 1 and not _extract_urls(user_message):
+        return ["What exactly would you like me to do?"]
+
     if has_research_intent and len(words) <= 14:
         return []
 
@@ -159,6 +163,18 @@ def _needs_clarification(user_message: str) -> list[str]:
         return ["Where should I place the output in the workspace?"]
 
     return []
+
+
+def _is_tiny_prompt(user_message: str) -> bool:
+    text = (user_message or "").strip()
+    if not text:
+        return False
+    if len(text) <= 3 and not _extract_urls(text):
+        return True
+    words = text.split()
+    if len(words) == 1 and len(text) <= 4 and not any(ch.isdigit() for ch in text):
+        return True
+    return False
 
 def _build_agent_registry_text(compact: bool = False) -> str:
 
@@ -315,6 +331,217 @@ def _extract_urls(text: str) -> list[str]:
         seen.add(cleaned)
         urls.append(cleaned)
     return urls
+
+
+def _extract_code_blocks(text: str) -> list[dict[str, str]]:
+    blocks: list[dict[str, str]] = []
+    pattern = re.compile(r"```(?P<lang>[a-zA-Z0-9_+-]*)\n(?P<code>.*?)\n```", re.DOTALL)
+    for match in pattern.finditer(text or ""):
+        blocks.append(
+            {
+                "language": str(match.group("lang") or "").strip().lower(),
+                "content": str(match.group("code") or "").strip(),
+            }
+        )
+    return blocks
+
+
+def _looks_like_file_creation_prompt(user_message: str) -> bool:
+    text = user_message.lower()
+    return (
+        any(token in text for token in ("create", "build", "implement", "write", "generate"))
+        and any(token in text for token in ("save", "workspace", "file", "project", "folder", "script", "app", "code"))
+    )
+
+
+def _infer_artifact_language(content: str, filename: str = "") -> str:
+    suffix = Path(filename).suffix.lower()
+    if suffix in {".py"}:
+        return "python"
+    if suffix in {".js", ".jsx"}:
+        return "javascript"
+    if suffix in {".ts", ".tsx"}:
+        return "typescript"
+    if suffix in {".sh"}:
+        return "bash"
+    if suffix in {".html"}:
+        return "html"
+    if suffix in {".css"}:
+        return "css"
+    if suffix in {".json"}:
+        return "json"
+
+    snippet = (content or "").lstrip()
+    if snippet.startswith("#!/usr/bin/env python") or "import " in content or "def " in content or "class " in content:
+        return "python"
+    if "console.log" in content or "function " in content or "const " in content or "let " in content or "var " in content:
+        return "javascript"
+    if "interface " in content or "type " in content:
+        return "typescript"
+    if "#!/bin/bash" in content or "set -e" in content:
+        return "bash"
+    if "<html" in content.lower():
+        return "html"
+    return ""
+
+
+def _artifact_extension(language: str) -> str:
+    mapping = {
+        "python": ".py",
+        "javascript": ".js",
+        "typescript": ".ts",
+        "bash": ".sh",
+        "html": ".html",
+        "css": ".css",
+        "json": ".json",
+    }
+    return mapping.get((language or "").strip().lower(), "")
+
+
+def _slugify_artifact_name(text: str) -> str:
+    cleaned = re.sub(r"https?://\S+", " ", text or "")
+    cleaned = re.sub(r"[^a-zA-Z0-9\s_-]+", " ", cleaned)
+    stop_words = {
+        "create", "build", "implement", "write", "generate", "save", "workspace",
+        "file", "code", "project", "folder", "app", "script", "the", "a", "an",
+        "to", "in", "for", "of", "with", "and", "make", "do", "this", "that",
+    }
+    words = [word.lower() for word in cleaned.split() if word.lower() not in stop_words]
+    slug = "_".join(words[:4]).strip("_")
+    return slug or "limbi_output"
+
+
+def _infer_artifact_filename(user_message: str, content: str, language_hint: str = "") -> str:
+    search_space = "\n".join([user_message, content])
+    explicit_patterns = [
+        r"(?:file\s+named|named|save\s+as|save\s+to|write\s+to)\s+([A-Za-z0-9._/-]+\.[A-Za-z0-9]+)",
+    ]
+    for pattern in explicit_patterns:
+        match = re.search(pattern, search_space, flags=re.IGNORECASE)
+        if match:
+            return match.group(1).strip().lstrip("./")
+
+    language = _infer_artifact_language(content, "")
+    ext = _artifact_extension(language or language_hint)
+    slug = _slugify_artifact_name(user_message)
+    return f"{slug}{ext or '.txt'}"
+
+
+async def _save_generated_artifact(
+    *,
+    user_message: str,
+    draft_text: str,
+    raw_text: str,
+    runtime_model: str,
+    provider_config: ProviderConfig,
+    progress_callback: Callable[[str], None] | None = None,
+) -> dict[str, Any]:
+    if not _looks_like_file_creation_prompt(user_message):
+        return {}
+
+    code_blocks = _extract_code_blocks(raw_text) or _extract_code_blocks(draft_text)
+    content = ""
+    language_hint = ""
+    if code_blocks:
+        best_block = max(code_blocks, key=lambda block: len(block.get("content", "")))
+        content = str(best_block.get("content") or "").strip()
+        language_hint = str(best_block.get("language") or "").strip()
+    elif any(token in draft_text.lower() for token in ("```", "def ", "class ", "function ", "console.log", "<html")):
+        content = draft_text.strip()
+
+    if not content:
+        try:
+            _emit_progress(progress_callback, "Generating file content")
+            artifact_llm = get_llm_provider(
+                ProviderConfig(
+                    provider=provider_config.provider,
+                    model=runtime_model or provider_config.model,
+                    base_url=provider_config.base_url,
+                    api_key=provider_config.api_key,
+                    temperature=0.0,
+                    max_tokens=min(provider_config.max_tokens, 512),
+                    azure_deployment=provider_config.azure_deployment,
+                    azure_api_version=provider_config.azure_api_version,
+                )
+            ).get_chat_model()
+            artifact_messages = [
+                SystemMessage(
+                    content=(
+                        "Generate only a source file payload for the user's request. "
+                        "Return plain text with these lines only:\n"
+                        "FILENAME: <filename>\n"
+                        "LANGUAGE: <language>\n"
+                        "```<language>\n"
+                        "<complete file content>\n"
+                        "```\n"
+                        "Do not add explanations."
+                    )
+                ),
+                HumanMessage(
+                    content=(
+                        f"User request:\n{user_message}\n\n"
+                        f"Assistant draft:\n{draft_text}\n\n"
+                        "Produce the file payload now."
+                    )
+                ),
+            ]
+            artifact_response = await asyncio.to_thread(artifact_llm.invoke, artifact_messages)
+            artifact_text = str(getattr(artifact_response, "content", "") or "").strip()
+            filename_match = re.search(r"^\s*FILENAME:\s*(.+)$", artifact_text, flags=re.IGNORECASE | re.MULTILINE)
+            language_match = re.search(r"^\s*LANGUAGE:\s*(.+)$", artifact_text, flags=re.IGNORECASE | re.MULTILINE)
+            block_match = re.search(r"```(?P<lang>[a-zA-Z0-9_+-]*)\n(?P<code>.*?)\n```", artifact_text, flags=re.DOTALL)
+            if block_match:
+                content = str(block_match.group("code") or "").strip()
+                language_hint = str(block_match.group("lang") or "").strip() or language_hint
+            if filename_match and content:
+                filename = filename_match.group(1).strip().lstrip("./")
+            else:
+                filename = _infer_artifact_filename(user_message, content or artifact_text, language_hint)
+            if language_match and not language_hint:
+                language_hint = str(language_match.group(1) or "").strip().lower()
+        except Exception as exc:
+            logger.debug("Artifact generation failed: %s", exc)
+            return {}
+    else:
+        filename = _infer_artifact_filename(user_message, content, language_hint)
+
+    if not content:
+        return {}
+
+    workspace_root = get_workspace_root()
+    target = (workspace_root / filename).expanduser().resolve()
+    if workspace_root not in target.parents and target != workspace_root:
+        target = (workspace_root / Path(filename).name).expanduser().resolve()
+
+    require_permission(load_config(), "filesystem", "file_agent", "write_file")
+
+    target.parent.mkdir(parents=True, exist_ok=True)
+    if target.exists() and target.is_file():
+        stem = target.stem
+        suffix = target.suffix
+        for index in range(1, 100):
+            candidate = target.with_name(f"{stem}_{index}{suffix}")
+            if not candidate.exists():
+                target = candidate
+                break
+
+    target.write_text(content, encoding="utf-8")
+    _emit_progress(progress_callback, f"Saved file: {target.name}")
+    record_trace_event(
+        kind="artifact.save",
+        message="generated artifact saved",
+        payload={
+            "path": str(target),
+            "language": language_hint or _infer_artifact_language(content, str(target)),
+            "chars": len(content),
+        },
+    )
+    return {
+        "path": str(target),
+        "filename": target.name,
+        "language": language_hint or _infer_artifact_language(content, str(target)),
+        "chars": len(content),
+    }
 
 
 def _dedupe_history_messages(messages: list[HumanMessage | AIMessage], limit: int = 8) -> list[HumanMessage | AIMessage]:
@@ -481,7 +708,7 @@ def _suggest_runtime_limits(level: str, base_max_tokens: int, base_temperature: 
     base_temperature = max(0.0, float(base_temperature or 0.1))
 
     if level == "simple":
-        max_tokens = min(base_max_tokens, 256)
+        max_tokens = min(base_max_tokens, 192)
         temperature = min(base_temperature, 0.05)
     elif level == "complex":
         max_tokens = min(max(base_max_tokens, 1024), 1536)
@@ -1098,6 +1325,8 @@ class Orchestrator:
         )
 
         clarification_questions = _needs_clarification(user_message)
+        if _is_tiny_prompt(user_message) and not clarification_questions:
+            clarification_questions = ["What exactly would you like me to do?"]
         if clarification_questions:
             final_text = "\n".join(f"- {q}" for q in clarification_questions)
             finish_trace(status="clarification", final_answer=final_text)
@@ -1351,6 +1580,18 @@ class Orchestrator:
             )
             if repaired:
                 parsed.conversation_text = repaired
+        artifact_info = await _save_generated_artifact(
+            user_message=user_message,
+            draft_text=parsed.conversation_text,
+            raw_text=raw_text,
+            runtime_model=runtime_model,
+            provider_config=self._provider.config,
+            progress_callback=progress_callback,
+        )
+        if artifact_info:
+            parsed.conversation_text = (
+                f"{parsed.conversation_text}\n\nSaved file: `{artifact_info['path']}`"
+            ).strip()
         _emit_progress(progress_callback, "Finalizing response")
 
         self._record_turn(
@@ -1432,6 +1673,8 @@ class Orchestrator:
         )
 
         clarification_questions = _needs_clarification(user_message)
+        if _is_tiny_prompt(user_message) and not clarification_questions:
+            clarification_questions = ["What exactly would you like me to do?"]
         if clarification_questions:
             final_text = "\n".join(f"- {q}" for q in clarification_questions)
             finish_trace(status="clarification", final_answer=final_text)
@@ -1681,6 +1924,18 @@ class Orchestrator:
             )
             if repaired:
                 parsed.conversation_text = repaired
+        artifact_info = await _save_generated_artifact(
+            user_message=user_message,
+            draft_text=parsed.conversation_text,
+            raw_text=full_text,
+            runtime_model=runtime_model,
+            provider_config=self._provider.config,
+            progress_callback=progress_callback,
+        )
+        if artifact_info:
+            parsed.conversation_text = (
+                f"{parsed.conversation_text}\n\nSaved file: `{artifact_info['path']}`"
+            ).strip()
         _emit_progress(progress_callback, "Finalizing response")
 
         self._record_turn(
