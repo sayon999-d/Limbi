@@ -60,10 +60,10 @@ def parse_llm_output(raw: str) -> ParsedOutput:
                     f"Unexpected JSON type: {type(parsed).__name__}"
                 )
         except json.JSONDecodeError as exc:
-            logger.warning("JSON parse error: %s", exc)
+            logger.debug("JSON parse error: %s", exc)
             result.parse_errors.append(f"JSONDecodeError: {exc}")
         except ValueError as exc:
-            logger.warning("Validation error: %s", exc)
+            logger.debug("Validation error: %s", exc)
             result.parse_errors.append(str(exc))
 
     text_parts: list[str] = []
