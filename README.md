@@ -5,7 +5,6 @@
     <img alt="Limbi" src="assets/limbi-animated.svg" width="500">
   </picture>
 
-  `<br/><br/>`
 
   [![Python 3.11+](https://img.shields.io/badge/Python-3.11%2B-3776AB?style=for-the-badge&logo=python&logoColor=white)](https://www.python.org/)
   [![Agents](https://img.shields.io/badge/Agents-90-00B894?style=for-the-badge)](#agent-catalog)
