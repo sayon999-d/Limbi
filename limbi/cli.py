@@ -185,7 +185,7 @@ _LOW_MEMORY_LOCAL_MODELS = {
 }
 
 _OLLAMA_CLOUD_MODELS = [
-    "deepseek-v3.1.7.5b-cloud",
+    "deepseek-v3.1.7.6b-cloud",
     "qwen3-coder:480b-cloud",
     "gpt-oss:120b-cloud",
     "gpt-oss:20b-cloud",
@@ -227,7 +227,7 @@ def _print_banner(console):
 
     title = Text()
     title.append("LIMBI", style="bold bright_green")
-    title.append(" v1.7.5", style="bold white")
+    title.append(" v1.7.6", style="bold white")
     title.append(" - Omni-Agent Orchestrator", style="white")
 
     help_line = Text()
@@ -364,8 +364,10 @@ def _prompt_line_with_escape(console, prompt: str) -> str | None:
     if not sys.stdin.isatty() or not sys.stdout.isatty():
         try:
             return console.input(prompt)
-        except (EOFError, KeyboardInterrupt):
+        except EOFError:
             return None
+        except KeyboardInterrupt:
+            raise
 
     if os.name != "nt":
         try:
@@ -374,8 +376,10 @@ def _prompt_line_with_escape(console, prompt: str) -> str | None:
             pass
         try:
             return input(prompt)
-        except (EOFError, KeyboardInterrupt):
+        except EOFError:
             return None
+        except KeyboardInterrupt:
+            raise
 
     def _draw_line(buffer: list[str], cursor: int) -> None:
         text = "".join(buffer)
@@ -2074,7 +2078,7 @@ Type a natural-language prompt to talk to Limbi.
     default=False,
     help="Skip workspace trust prompt (for CI/automation).",
 )
-@click.version_option(version="1.7.5", prog_name="limbi")
+@click.version_option(version="1.7.6", prog_name="limbi")
 def main(
     prompt: str | None,
     provider: str | None,

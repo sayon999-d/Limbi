@@ -5,7 +5,6 @@
     <img alt="Limbi" src="assets/limbi-animated.svg" width="500">
   </picture>
 
-
   [![Python 3.11+](https://img.shields.io/badge/Python-3.11%2B-3776AB?style=for-the-badge&logo=python&logoColor=white)](https://www.python.org/)
   [![Agents](https://img.shields.io/badge/Agents-90-00B894?style=for-the-badge)](#agent-catalog)
   [![Actions](https://img.shields.io/badge/Actions-469-0984E3?style=for-the-badge)](#agent-catalog)
@@ -15,7 +14,7 @@
 
 Limbi is an omni-agent orchestration platform for running many specialized AI agents from one command, one Python API, or one MCP-compatible editor workflow.
 
-Current package version: `1.7.5`
+Current package version: `1.7.6`
 
 ## Quick Install
 
