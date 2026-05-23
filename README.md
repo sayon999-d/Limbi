@@ -16,7 +16,7 @@
 
 Limbi is an omni-agent orchestration platform for running many specialized AI agents from one command, one Python API, or one MCP-compatible editor workflow.
 
-Current package version: `1.6.9`
+Current package version: `1.7.0`
 
 ## Quick Install
 
@@ -46,6 +46,9 @@ What was added:
   calculating, generating, or running delegated agents.
 - A shorter terminal command surface so the banner and quick help only show the commands
   most people actually need during normal use.
+- Esc now cancels the current typed prompt line before a message is sent.
+- Provider/model save prompts now require an explicit yes or no instead of accepting a
+  bare Enter as consent.
 - A custom skill system with `/skills`, `/skill`, update, and delete support.
 - Esc now cancels the current prompt line before a message is sent, so you can back out cleanly while typing.
 - File-creation prompts now persist generated code into the workspace through the agent-backed save workflow instead of only describing the save.
@@ -70,6 +73,8 @@ What was added:
 - Research answer repair so Limbi can rewrite accidental internal registry dumps into a
   topic-based answer when the prompt was meant to be research.
 - Adaptive runtime budgeting so simple tasks stay light and harder tasks get more room.
+- Create-and-save prompts now persist the generated file automatically through the
+  code-agent plus file-agent path instead of only narrating the save.
 - One-line bootstrap scripts for Linux, macOS, WSL2, and Windows-style environment checks.
 
 What changed:

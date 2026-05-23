@@ -185,7 +185,7 @@ _LOW_MEMORY_LOCAL_MODELS = {
 }
 
 _OLLAMA_CLOUD_MODELS = [
-    "deepseek-v3.1.6.9b-cloud",
+    "deepseek-v3.1.7.0b-cloud",
     "qwen3-coder:480b-cloud",
     "gpt-oss:120b-cloud",
     "gpt-oss:20b-cloud",
@@ -227,7 +227,7 @@ def _print_banner(console):
 
     title = Text()
     title.append("LIMBI", style="bold bright_green")
-    title.append(" v1.6.9", style="bold white")
+    title.append(" v1.7.0", style="bold white")
     title.append(" - Omni-Agent Orchestrator", style="white")
 
     help_line = Text()
@@ -361,19 +361,73 @@ def _start_escape_watcher(stop_event: threading.Event) -> threading.Thread | Non
 
 
 def _prompt_line_with_escape(console, prompt: str) -> str | None:
-    stop_event = threading.Event()
-    watcher = _start_escape_watcher(stop_event)
-    try:
+    if not sys.stdin.isatty() or not sys.stdout.isatty():
         try:
             return console.input(prompt)
         except (EOFError, KeyboardInterrupt):
-            if stop_event.is_set():
+            return None
+
+    console.print(prompt, end="")
+    if os.name == "nt":
+        import msvcrt
+
+        buffer: list[str] = []
+        while True:
+            key = msvcrt.getwch()
+            if key in ("\r", "\n"):
+                console.print()
+                return "".join(buffer)
+            if key == "\x03":
+                raise KeyboardInterrupt
+            if key == "\x1b":
+                console.print()
                 return None
-            raise
+            if key in ("\b", "\x7f"):
+                if buffer:
+                    buffer.pop()
+                    console.file.write("\b \b")
+                    console.file.flush()
+                continue
+            if key in ("\x00", "\xe0"):
+                msvcrt.getwch()
+                continue
+            buffer.append(key)
+            console.file.write(key)
+            console.file.flush()
+        return None
+
+    import termios
+    import tty
+
+    fd = sys.stdin.fileno()
+    old_settings = termios.tcgetattr(fd)
+    buffer: list[str] = []
+    try:
+        tty.setraw(fd)
+        while True:
+            key = sys.stdin.read(1)
+            if key in ("\r", "\n"):
+                console.print()
+                return "".join(buffer)
+            if key == "\x03":
+                raise KeyboardInterrupt
+            if key == "\x1b":
+                console.print()
+                return None
+            if key in ("\b", "\x7f"):
+                if buffer:
+                    buffer.pop()
+                    console.file.write("\b \b")
+                    console.file.flush()
+                continue
+            if key == "\x04":
+                console.print()
+                return None
+            buffer.append(key)
+            console.file.write(key)
+            console.file.flush()
     finally:
-        stop_event.set()
-        if watcher is not None:
-            watcher.join(timeout=0.2)
+        termios.tcsetattr(fd, termios.TCSADRAIN, old_settings)
 
 
 def _render_menu_entry(entry: Any) -> str:
@@ -1991,7 +2045,7 @@ Type a natural-language prompt to talk to Limbi.
     default=False,
     help="Skip workspace trust prompt (for CI/automation).",
 )
-@click.version_option(version="1.6.9", prog_name="limbi")
+@click.version_option(version="1.7.0", prog_name="limbi")
 def main(
     prompt: str | None,
     provider: str | None,
