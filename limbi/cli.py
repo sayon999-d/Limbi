@@ -185,7 +185,7 @@ _LOW_MEMORY_LOCAL_MODELS = {
 }
 
 _OLLAMA_CLOUD_MODELS = [
-    "deepseek-v3.1.7.7b-cloud",
+    "deepseek-v3.1.7.8b-cloud",
     "qwen3-coder:480b-cloud",
     "gpt-oss:120b-cloud",
     "gpt-oss:20b-cloud",
@@ -227,7 +227,7 @@ def _print_banner(console):
 
     title = Text()
     title.append("LIMBI", style="bold bright_green")
-    title.append(" v1.7.7", style="bold white")
+    title.append(" v1.7.8", style="bold white")
     title.append(" - Omni-Agent Orchestrator", style="white")
 
     help_line = Text()
@@ -1722,6 +1722,13 @@ async def _wait_for_escape(escape_stop: threading.Event) -> None:
         await asyncio.sleep(0.05)
 
 
+def _consume_task_result(task: asyncio.Task[Any]) -> None:
+    try:
+        task.exception()
+    except Exception:
+        pass
+
+
 async def _send_message(state, message: str, console) -> None:
     from rich.markdown import Markdown
     from rich.panel import Panel
@@ -1744,15 +1751,11 @@ async def _send_message(state, message: str, console) -> None:
             chat_task = asyncio.create_task(
                 state["orchestrator"].chat(message, progress_callback=_update_progress)
             )
-            done, pending = await asyncio.wait(
-                {chat_task, escape_task},
-                return_when=asyncio.FIRST_COMPLETED,
-            )
+            chat_task.add_done_callback(_consume_task_result)
+            done, pending = await asyncio.wait({chat_task, escape_task}, return_when=asyncio.FIRST_COMPLETED)
             if escape_task in done and not chat_task.done():
                 chat_task.cancel()
                 console.print("\n[yellow]Cancelled.[/] Returning to the prompt.\n")
-                with contextlib.suppress(asyncio.CancelledError):
-                    await chat_task
                 return
             result = await chat_task
         except KeyboardInterrupt:
@@ -2098,7 +2101,7 @@ Type a natural-language prompt to talk to Limbi.
     default=False,
     help="Skip workspace trust prompt (for CI/automation).",
 )
-@click.version_option(version="1.7.7", prog_name="limbi")
+@click.version_option(version="1.7.8", prog_name="limbi")
 def main(
     prompt: str | None,
     provider: str | None,

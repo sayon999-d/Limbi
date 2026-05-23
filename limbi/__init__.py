@@ -3,7 +3,7 @@ from __future__ import annotations
 from importlib import import_module
 from typing import Any
 
-__version__ = "1.7.7"
+__version__ = "1.7.8"
 __author__ = "Sayon Manna"
 
 from limbi.agents import BaseAgent, AgentResult, get_agent, list_agents
