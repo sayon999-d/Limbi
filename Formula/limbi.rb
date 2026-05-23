@@ -3,8 +3,8 @@ class Limbi < Formula
 
   desc "Omni-Agent orchestration platform for local and cloud LLM workflows"
   homepage "https://github.com/sayon999-d/Limbi-"
-  url "https://files.pythonhosted.org/packages/f4/78/e30792ed0993c30e393c2fbaad9aeca0e384c53d7eb6e90366d25376e3d2/limbi-1.7.4.tar.gz"
-  sha256 "dfbe2c35a42bcc074421791dd66775eb46c1c4585cfe5e27bede53d2fd478033"
+  url "https://files.pythonhosted.org/packages/source/l/limbi/limbi-1.7.5.tar.gz"
+  sha256 "febecbdbc1653312548433b0973fdc4dc562da77b5d7e624c531230d84097e80"
   license "Apache-2.0"
 
   depends_on "python@3.11"
