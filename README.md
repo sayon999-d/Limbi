@@ -32,6 +32,31 @@ curl -fsSL https://raw.githubusercontent.com/sayon999-d/Limbi-/main/scripts/inst
 python -m pip install --upgrade limbi
 ```
 
+### Homebrew Troubleshooting
+
+If `brew upgrade limbi` still shows an older version after you have already updated the tap, try refreshing the tap repo directly:
+
+```bash
+git -C "$(brew --repo sayon999-d/limbi)" pull --ff-only
+brew upgrade limbi
+```
+
+If Brew is still holding on to stale tap state, use the stronger reset path:
+
+```bash
+brew update-reset
+brew upgrade limbi
+```
+
+If the tap itself is out of sync, you can reinstall the tap cleanly after removing the package:
+
+```bash
+brew uninstall limbi
+brew untap sayon999-d/limbi
+brew tap sayon999-d/limbi https://github.com/sayon999-d/Limbi-.git
+brew install limbi
+```
+
 ## Recent Updates
 
 Limbi has grown from a simple agent runner into a workspace-aware orchestration layer.
