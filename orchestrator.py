@@ -42,6 +42,8 @@ RETRY_BACKOFF_BASE = 0.5
 MAX_HISTORY_MESSAGES = 24
 SUMMARIZE_THRESHOLD = 16
 
+_LOCAL_PROVIDER_NAMES = {"ollama", "lmstudio", "vllm", "localai", "koboldcpp", "llamacpp"}
+
 SYSTEM_PROMPT = """\
 You are **Limbi**, an elite full-stack AI assistant with access to a swarm \
 of specialised agents that can execute real-world actions on behalf of the user.
@@ -516,7 +518,9 @@ def _suggest_runtime_limits(level: str, base_max_tokens: int, base_temperature: 
 def _suggest_model_for_task(provider_name: str, task_route: str, task_level: str, current_model: str) -> str:
     provider_name = (provider_name or "").strip().lower()
     current_model = (current_model or "").strip()
-    if provider_name not in {"ollama", "lmstudio", "vllm", "localai", "koboldcpp", "llamacpp", "ollama_cloud"}:
+    if provider_name in _LOCAL_PROVIDER_NAMES:
+        return current_model
+    if provider_name not in {"ollama_cloud"}:
         return current_model
     if provider_name == "ollama_cloud":
         if task_route == "research" or task_level == "complex":
@@ -599,6 +603,13 @@ def _classify_llm_error(exc: Exception, provider_name: str = "", model_name: str
         return (
             f"Usage limit hit for {provider_label} / {model_label}. "
             "Wait a moment, then try again or switch providers."
+        )
+
+    model_signals = ("model not found", "not found (status code: 404)", "404")
+    if any(signal in lowered for signal in model_signals):
+        return (
+            f"Model `{model_label}` was not found for {provider_label}. "
+            "Open /models and choose one that is actually installed or available from that provider."
         )
 
     return ""
