@@ -5,6 +5,8 @@ import logging
 import os
 import re
 import time
+import uuid
+from pathlib import Path
 from urllib.parse import urlparse
 from typing import Any, AsyncIterator, Callable
 
@@ -515,32 +517,56 @@ async def _save_generated_artifact(
 
     require_permission(load_config(), "filesystem", "file_agent", "write_file")
 
-    target.parent.mkdir(parents=True, exist_ok=True)
-    if target.exists() and target.is_file():
-        stem = target.stem
-        suffix = target.suffix
-        for index in range(1, 100):
-            candidate = target.with_name(f"{stem}_{index}{suffix}")
-            if not candidate.exists():
-                target = candidate
-                break
+    language = language_hint or _infer_artifact_language(content, str(target))
+    validation_result = None
+    if language in {"python", "javascript", "typescript", "go", "bash"}:
+        validation_result = get_agent("code_agent").execute(
+            "validate_syntax",
+            {
+                "code": content,
+                "language": language,
+            },
+        )
+        record_trace_event(
+            kind="artifact.validation",
+            message="artifact syntax validation completed",
+            payload={
+                "language": language,
+                "success": validation_result.success,
+                "error": validation_result.error,
+            },
+        )
 
-    target.write_text(content, encoding="utf-8")
-    _emit_progress(progress_callback, f"Saved file: {target.name}")
+    save_result = get_agent("file_agent").execute(
+        "write_to_file",
+        {
+            "path": str(target),
+            "content": content,
+            "language": language,
+            "overwrite": True,
+        },
+    )
+    if not save_result.success:
+        raise ValueError(save_result.error or f"Failed to save '{target.name}'")
+
+    saved_path = str((save_result.data or {}).get("path") or target)
+    _emit_progress(progress_callback, f"Saved file: {Path(saved_path).name}")
     record_trace_event(
         kind="artifact.save",
         message="generated artifact saved",
         payload={
-            "path": str(target),
-            "language": language_hint or _infer_artifact_language(content, str(target)),
+            "path": saved_path,
+            "language": language,
             "chars": len(content),
+            "validated": bool(validation_result and validation_result.success),
         },
     )
     return {
-        "path": str(target),
-        "filename": target.name,
-        "language": language_hint or _infer_artifact_language(content, str(target)),
+        "path": saved_path,
+        "filename": Path(saved_path).name,
+        "language": language,
         "chars": len(content),
+        "validated": bool(validation_result and validation_result.success),
     }
 
 

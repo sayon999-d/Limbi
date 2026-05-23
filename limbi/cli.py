@@ -185,7 +185,7 @@ _LOW_MEMORY_LOCAL_MODELS = {
 }
 
 _OLLAMA_CLOUD_MODELS = [
-    "deepseek-v3.1.6.8b-cloud",
+    "deepseek-v3.1.6.9b-cloud",
     "qwen3-coder:480b-cloud",
     "gpt-oss:120b-cloud",
     "gpt-oss:20b-cloud",
@@ -227,7 +227,7 @@ def _print_banner(console):
 
     title = Text()
     title.append("LIMBI", style="bold bright_green")
-    title.append(" v1.6.8", style="bold white")
+    title.append(" v1.6.9", style="bold white")
     title.append(" - Omni-Agent Orchestrator", style="white")
 
     help_line = Text()
@@ -360,6 +360,22 @@ def _start_escape_watcher(stop_event: threading.Event) -> threading.Thread | Non
     return thread
 
 
+def _prompt_line_with_escape(console, prompt: str) -> str | None:
+    stop_event = threading.Event()
+    watcher = _start_escape_watcher(stop_event)
+    try:
+        try:
+            return console.input(prompt)
+        except (EOFError, KeyboardInterrupt):
+            if stop_event.is_set():
+                return None
+            raise
+    finally:
+        stop_event.set()
+        if watcher is not None:
+            watcher.join(timeout=0.2)
+
+
 def _render_menu_entry(entry: Any) -> str:
     if isinstance(entry, dict):
         label = str(entry.get("label") or entry.get("name") or entry.get("value") or "")
@@ -410,6 +426,28 @@ def _select_from_menu(console, title: str, choices: list[Any], default_index: in
             return choices[index]
         if key in ("q", "escape"):
             raise click.ClickException("Selection cancelled.")
+
+
+def _prompt_yes_no(console, prompt: str, *, default: bool | None = None) -> bool:
+    default_hint = ""
+    if default is True:
+        default_hint = " [Y/n]"
+    elif default is False:
+        default_hint = " [y/N]"
+    else:
+        default_hint = " [y/n]"
+    while True:
+        answer = _prompt_line_with_escape(console, f"{prompt}{default_hint}: ")
+        if answer is None:
+            raise click.ClickException("Prompt cancelled.")
+        normalized = answer.strip().lower()
+        if not normalized and default is not None:
+            return default
+        if normalized in {"y", "yes"}:
+            return True
+        if normalized in {"n", "no"}:
+            return False
+        console.print("[dim]Please type y or n.[/]")
 
 
 def _print_agent_table(console):
@@ -744,7 +782,7 @@ def _configure_runtime_from_model_choice(state: dict[str, Any], console) -> None
     state["api_key"] = api_key
     _refresh_orchestrator(state)
 
-    if click.confirm("Save this provider/model to the workspace config?", default=True):
+    if _prompt_yes_no(console, "Save this provider/model to the workspace config?", default=False):
         ws_config = dict(state["ws_config"])
         ws_config["provider"] = provider
         ws_config["model"] = model
@@ -845,7 +883,7 @@ def _manage_provider_keys(state: dict[str, Any], console) -> None:
                 console.print(f"[yellow]Deleted saved API key for {provider}.[/]")
             else:
                 console.print(f"[dim]No saved API key existed for {provider}.[/]")
-        if not click.confirm("Manage another saved key?", default=False):
+        if not _prompt_yes_no(console, "Manage another saved key?", default=False):
             return
 
 
@@ -1716,7 +1754,11 @@ def _repl(state, console):
 
     while True:
         try:
-            user_input = console.input("> ").strip()
+            raw_input = _prompt_line_with_escape(console, "> ")
+            if raw_input is None:
+                console.print("[dim]Input cancelled.[/]")
+                continue
+            user_input = raw_input.strip()
         except (EOFError, KeyboardInterrupt):
             console.print("\nGoodbye.")
             break
@@ -1949,7 +1991,7 @@ Type a natural-language prompt to talk to Limbi.
     default=False,
     help="Skip workspace trust prompt (for CI/automation).",
 )
-@click.version_option(version="1.6.8", prog_name="limbi")
+@click.version_option(version="1.6.9", prog_name="limbi")
 def main(
     prompt: str | None,
     provider: str | None,

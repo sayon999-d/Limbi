@@ -46,6 +46,8 @@ What was added:
 - A shorter terminal command surface so the banner and quick help only show the commands
   most people actually need during normal use.
 - A custom skill system with `/skills`, `/skill`, update, and delete support.
+- Esc now cancels the current prompt line before a message is sent, so you can back out cleanly while typing.
+- File-creation prompts now persist generated code into the workspace through the agent-backed save workflow instead of only describing the save.
 - A self-learning skill path with approval-gated skill creation, skill refinement, and a
   local skill hub for publishing packs.
 - Skill configs that can inherit the current provider, or pin their own provider/model.
