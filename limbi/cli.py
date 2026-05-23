@@ -185,7 +185,7 @@ _LOW_MEMORY_LOCAL_MODELS = {
 }
 
 _OLLAMA_CLOUD_MODELS = [
-    "deepseek-v3.1.7.2b-cloud",
+    "deepseek-v3.1.7.3b-cloud",
     "qwen3-coder:480b-cloud",
     "gpt-oss:120b-cloud",
     "gpt-oss:20b-cloud",
@@ -227,7 +227,7 @@ def _print_banner(console):
 
     title = Text()
     title.append("LIMBI", style="bold bright_green")
-    title.append(" v1.7.2", style="bold white")
+    title.append(" v1.7.3", style="bold white")
     title.append(" - Omni-Agent Orchestrator", style="white")
 
     help_line = Text()
@@ -367,11 +367,35 @@ def _prompt_line_with_escape(console, prompt: str) -> str | None:
         except (EOFError, KeyboardInterrupt):
             return None
 
+    def _draw_line(buffer: list[str], cursor: int) -> None:
+        text = "".join(buffer)
+        console.file.write("\r\x1b[2K")
+        console.file.write(prompt)
+        console.file.write(text)
+        if cursor < len(buffer):
+            console.file.write(f"\r\x1b[{len(prompt) + cursor}C")
+        console.file.flush()
+
+    def _read_unix_escape_sequence() -> str:
+        import select
+
+        sequence = ""
+        while select.select([sys.stdin], [], [], 0.05)[0]:
+            char = sys.stdin.read(1)
+            sequence += char
+            if char.isalpha() or char == "~":
+                break
+            if len(sequence) > 8:
+                break
+        return sequence
+
     console.print(prompt, end="")
     if os.name == "nt":
         import msvcrt
 
         buffer: list[str] = []
+        cursor = 0
+        _draw_line(buffer, cursor)
         while True:
             key = msvcrt.getwch()
             if key in ("\r", "\n"):
@@ -380,20 +404,59 @@ def _prompt_line_with_escape(console, prompt: str) -> str | None:
             if key == "\x03":
                 raise KeyboardInterrupt
             if key == "\x1b":
+                if msvcrt.kbhit():
+                    prefix = msvcrt.getwch()
+                    if prefix in ("\x00", "\xe0") and msvcrt.kbhit():
+                        code = msvcrt.getwch()
+                        if code == "K":  # left
+                            cursor = max(0, cursor - 1)
+                            _draw_line(buffer, cursor)
+                            continue
+                        if code == "M":  # right
+                            cursor = min(len(buffer), cursor + 1)
+                            _draw_line(buffer, cursor)
+                            continue
+                        if code == "G":  # home
+                            cursor = 0
+                            _draw_line(buffer, cursor)
+                            continue
+                        if code == "O":  # end
+                            cursor = len(buffer)
+                            _draw_line(buffer, cursor)
+                            continue
+                        if code == "S":  # delete
+                            if cursor < len(buffer):
+                                del buffer[cursor]
+                                _draw_line(buffer, cursor)
+                            continue
                 console.print()
                 return None
             if key in ("\b", "\x7f"):
-                if buffer:
-                    buffer.pop()
-                    console.file.write("\b \b")
-                    console.file.flush()
+                if cursor > 0:
+                    del buffer[cursor - 1]
+                    cursor -= 1
+                    _draw_line(buffer, cursor)
                 continue
             if key in ("\x00", "\xe0"):
-                msvcrt.getwch()
+                if not msvcrt.kbhit():
+                    continue
+                code = msvcrt.getwch()
+                if code == "K":  # left
+                    cursor = max(0, cursor - 1)
+                elif code == "M":  # right
+                    cursor = min(len(buffer), cursor + 1)
+                elif code == "G":  # home
+                    cursor = 0
+                elif code == "O":  # end
+                    cursor = len(buffer)
+                elif code == "S":  # delete
+                    if cursor < len(buffer):
+                        del buffer[cursor]
+                _draw_line(buffer, cursor)
                 continue
-            buffer.append(key)
-            console.file.write(key)
-            console.file.flush()
+            buffer.insert(cursor, key)
+            cursor += 1
+            _draw_line(buffer, cursor)
         return None
 
     import termios
@@ -402,8 +465,10 @@ def _prompt_line_with_escape(console, prompt: str) -> str | None:
     fd = sys.stdin.fileno()
     old_settings = termios.tcgetattr(fd)
     buffer: list[str] = []
+    cursor = 0
     try:
         tty.setraw(fd)
+        _draw_line(buffer, cursor)
         while True:
             key = sys.stdin.read(1)
             if key in ("\r", "\n"):
@@ -412,20 +477,44 @@ def _prompt_line_with_escape(console, prompt: str) -> str | None:
             if key == "\x03":
                 raise KeyboardInterrupt
             if key == "\x1b":
+                sequence = _read_unix_escape_sequence()
+                if sequence == "[D":  # left
+                    cursor = max(0, cursor - 1)
+                    _draw_line(buffer, cursor)
+                    continue
+                if sequence == "[C":  # right
+                    cursor = min(len(buffer), cursor + 1)
+                    _draw_line(buffer, cursor)
+                    continue
+                if sequence in {"[H", "[1~", "[7~"}:  # home
+                    cursor = 0
+                    _draw_line(buffer, cursor)
+                    continue
+                if sequence in {"[F", "[4~", "[8~"}:  # end
+                    cursor = len(buffer)
+                    _draw_line(buffer, cursor)
+                    continue
+                if sequence == "[3~":  # delete
+                    if cursor < len(buffer):
+                        del buffer[cursor]
+                        _draw_line(buffer, cursor)
+                    continue
+                if sequence in {"[A", "[B"}:
+                    continue
                 console.print()
                 return None
             if key in ("\b", "\x7f"):
-                if buffer:
-                    buffer.pop()
-                    console.file.write("\b \b")
-                    console.file.flush()
+                if cursor > 0:
+                    del buffer[cursor - 1]
+                    cursor -= 1
+                    _draw_line(buffer, cursor)
                 continue
             if key == "\x04":
                 console.print()
                 return None
-            buffer.append(key)
-            console.file.write(key)
-            console.file.flush()
+            buffer.insert(cursor, key)
+            cursor += 1
+            _draw_line(buffer, cursor)
     finally:
         termios.tcsetattr(fd, termios.TCSADRAIN, old_settings)
 
@@ -2045,7 +2134,7 @@ Type a natural-language prompt to talk to Limbi.
     default=False,
     help="Skip workspace trust prompt (for CI/automation).",
 )
-@click.version_option(version="1.7.2", prog_name="limbi")
+@click.version_option(version="1.7.3", prog_name="limbi")
 def main(
     prompt: str | None,
     provider: str | None,
