@@ -1,122 +1,64 @@
-
 from __future__ import annotations
 
-__version__ = "1.7.1"
+from importlib import import_module
+from typing import Any
+
+__version__ = "1.7.2"
 __author__ = "Sayon Manna"
 
-from limbi.agents import (  
-    BaseAgent,
-    AgentResult,
-    get_agent,
-    list_agents,
-)
+from limbi.agents import BaseAgent, AgentResult, get_agent, list_agents
 
-from limbi.agents import (  
-    reflex_agent,
-    planner_agent,
-    critic_agent,
-    router_agent,
-    memory_agent,
-    react_agent,
-    learning_agent,
-    swarm_agent,
-    evaluation_agent,
-    knowledge_agent,
-    research_agent,
-)
-
-from limbi.agents import (  
-    code_agent,
-    file_agent,
-    git_agent,
-    data_agent,
-    database_agent,
-    devops_agent,
-    aws_agent,
-    gcp_agent,
-    azure_agent,
-    kubernetes_agent,
-    jira_agent,
-    qa_agent,
-    docs_agent,
-    scheduler_agent,
-    comms_agent,
-    security_agent,
-    cicd_agent,
-    testing_agent,
-    migration_agent,
-    performance_agent,
-)
+_LAZY_EXPORTS = {
+    "Orchestrator": ("limbi.orchestrator", "Orchestrator"),
+    "get_llm_provider": ("limbi.llm_provider", "get_llm_provider"),
+    "list_providers": ("limbi.llm_provider", "list_providers"),
+    "ProviderConfig": ("limbi.llm_provider", "ProviderConfig"),
+    "init_db": ("limbi.audit_log", "init_db"),
+}
 
 
-from limbi.agents import (  
-    browser_agent,
-    web_scraping_agent,
-    os_agent,
-    tool_builder_agent,
-    integration_agent,
-    auth_agent,
-    observability_agent,
-    workflow_agent,
-    approval_agent,
-    policy_agent,
-    multimodal_agent,
-    design_agent,
-    customer_support_agent,
-    sales_agent,
-    finance_agent,
-    legal_agent,
-    simulation_agent,
-    notification_agent,
-    api_gateway_agent,
-    feature_flag_agent,
-    documentation_agent,
-    reporting_agent,
-    sre_agent,
-    onboarding_agent,
-    cost_agent,
-    nlp_agent,
-    feedback_agent,
-    payments_agent,
-    compliance_agent,
-    incident_agent,
-    analytics_agent,
-    project_management_agent,
-    context_memory_agent,
-    mutation_agent,
-    execution_backend_agent,
-)
+def __getattr__(name: str) -> Any:
+    if name in _LAZY_EXPORTS:
+        module_name, attribute_name = _LAZY_EXPORTS[name]
+        module = import_module(module_name)
+        value = getattr(module, attribute_name)
+        globals()[name] = value
+        return value
+
+    if name.endswith("_agent"):
+        module = import_module(f"limbi.agents.{name}")
+        globals()[name] = module
+        return module
+
+    raise AttributeError(f"module 'limbi' has no attribute {name!r}")
 
 
-from limbi.agents import (  
-    healthcare_agent,
-    education_agent,
-    hr_agent,
-    recruiting_agent,
-    procurement_agent,
-    real_estate_agent,
-    ecommerce_agent,
-    marketing_agent,
-    social_media_agent,
-    blockchain_agent,
-    iot_agent,
-    travel_agent,
-    manufacturing_agent,
-    customer_success_agent,
-    insurance_agent,
-    logistics_agent,
-    hospitality_agent,
-    agriculture_agent,
-    media_agent,
-    government_agent,
-    energy_agent,
-    sustainability_agent,
-)
+def __dir__() -> list[str]:
+    return sorted(
+        set(
+            [
+                "__version__",
+                "__author__",
+                "BaseAgent",
+                "AgentResult",
+                "get_agent",
+                "list_agents",
+                *list(_LAZY_EXPORTS.keys()),
+            ]
+        )
+    )
 
-from limbi.orchestrator import Orchestrator 
-from limbi.llm_provider import (  
-    get_llm_provider,
-    list_providers,
-    ProviderConfig,
-)
-from limbi.audit_log import init_db
+
+__all__ = [
+    "__version__",
+    "__author__",
+    "BaseAgent",
+    "AgentResult",
+    "get_agent",
+    "list_agents",
+    "Orchestrator",
+    "get_llm_provider",
+    "list_providers",
+    "ProviderConfig",
+    "init_db",
+]
