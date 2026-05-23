@@ -5,17 +5,18 @@
     <img alt="Limbi" src="assets/limbi-animated.svg" width="500">
   </picture>
 
-  <br/><br/>
+  `<br/><br/>`
 
   [![Python 3.11+](https://img.shields.io/badge/Python-3.11%2B-3776AB?style=for-the-badge&logo=python&logoColor=white)](https://www.python.org/)
   [![Agents](https://img.shields.io/badge/Agents-90-00B894?style=for-the-badge)](#agent-catalog)
   [![Actions](https://img.shields.io/badge/Actions-469-0984E3?style=for-the-badge)](#agent-catalog)
   [![Apache 2.0](https://img.shields.io/badge/License-Apache_2.0-6C5CE7?style=for-the-badge)](LICENSE)
+
 </div>
 
 Limbi is an omni-agent orchestration platform for running many specialized AI agents from one command, one Python API, or one MCP-compatible editor workflow.
 
-Current package version: `1.6.2`
+Current package version: `1.6.9`
 
 ## Quick Install
 
@@ -132,12 +133,12 @@ Limbi also supports model routers and hosted model catalogs such as OpenRouter, 
 
 Limbi solves four core problems.
 
-| Problem | What usually happens | What Limbi provides |
-| --- | --- | --- |
-| Tool fragmentation | Users switch between many tools and manually copy context. | One orchestration layer for many domains. |
-| Generic AI responses | A single model tries to reason about every domain at once. | Specialized agents with focused responsibilities. |
-| Lost context | Findings from one step are forgotten in the next step. | Shared context memory between agents. |
-| Weak execution trail | Users cannot easily see what was executed or why. | Audit logging, structured results, and workspace state. |
+| Problem              | What usually happens                                       | What Limbi provides                                     |
+| -------------------- | ---------------------------------------------------------- | ------------------------------------------------------- |
+| Tool fragmentation   | Users switch between many tools and manually copy context. | One orchestration layer for many domains.               |
+| Generic AI responses | A single model tries to reason about every domain at once. | Specialized agents with focused responsibilities.       |
+| Lost context         | Findings from one step are forgotten in the next step.     | Shared context memory between agents.                   |
+| Weak execution trail | Users cannot easily see what was executed or why.          | Audit logging, structured results, and workspace state. |
 
 ## Is Limbi Necessary
 
@@ -360,132 +361,132 @@ python -m limbi --list-agents
 
 These agents help the system plan, route, critique, reason, coordinate, learn, evaluate, and remember.
 
-| Agent | Main responsibility |
-| --- | --- |
-| `planner_agent` | Breaks large goals into smaller execution steps. |
-| `critic_agent` | Reviews plans and outputs for quality, gaps, and risk. |
-| `router_agent` | Classifies prompts and chooses suitable agents. |
-| `react_agent` | Supports reason-and-act style workflows. |
-| `reflex_agent` | Provides reflexive evaluation and adaptation behavior. |
-| `model_reflex_agent` | Handles model-oriented reflex workflows. |
-| `taskloop_agent` | Supports repeated task loops and iterative execution. |
-| `memory_agent` | Stores and recalls conversation memory. |
-| `context_memory_agent` | Shares results between agents in a session. |
-| `swarm_agent` | Coordinates multi-agent workflows. |
-| `evaluation_agent` | Benchmarks and evaluates outputs. |
-| `learning_agent` | Captures learning and feedback over time. |
-| `knowledge_agent` | Stores and retrieves reusable knowledge. |
-| `research_agent` | Helps gather and structure research findings. |
+| Agent                    | Main responsibility                                    |
+| ------------------------ | ------------------------------------------------------ |
+| `planner_agent`        | Breaks large goals into smaller execution steps.       |
+| `critic_agent`         | Reviews plans and outputs for quality, gaps, and risk. |
+| `router_agent`         | Classifies prompts and chooses suitable agents.        |
+| `react_agent`          | Supports reason-and-act style workflows.               |
+| `reflex_agent`         | Provides reflexive evaluation and adaptation behavior. |
+| `model_reflex_agent`   | Handles model-oriented reflex workflows.               |
+| `taskloop_agent`       | Supports repeated task loops and iterative execution.  |
+| `memory_agent`         | Stores and recalls conversation memory.                |
+| `context_memory_agent` | Shares results between agents in a session.            |
+| `swarm_agent`          | Coordinates multi-agent workflows.                     |
+| `evaluation_agent`     | Benchmarks and evaluates outputs.                      |
+| `learning_agent`       | Captures learning and feedback over time.              |
+| `knowledge_agent`      | Stores and retrieves reusable knowledge.               |
+| `research_agent`       | Helps gather and structure research findings.          |
 
 ### Engineering Agents
 
 These agents work on software engineering tasks such as code, files, tests, databases, migrations, Git, and documentation.
 
-| Agent | Main responsibility |
-| --- | --- |
-| `code_agent` | Generates, explains, reviews, and debugs code. |
-| `file_agent` | Reads, writes, searches, and organizes files. |
-| `git_agent` | Handles Git-oriented operations and explanations. |
-| `database_agent` | Works with schemas, queries, migrations, and database planning. |
-| `testing_agent` | Creates test plans, test cases, and quality checks. |
-| `qa_agent` | Supports quality assurance strategy and regression thinking. |
-| `migration_agent` | Plans and describes migrations between systems or schemas. |
-| `docs_agent` | Produces and updates documentation. |
-| `documentation_agent` | Generates README files, API docs, ADRs, runbooks, and glossaries. |
-| `data_agent` | Supports data processing and analysis workflows. |
-| `nlp_agent` | Supports text classification, summarization, entities, translation, and intent work. |
-| `analytics_agent` | Handles analytics reports and insight generation. |
-| `reporting_agent` | Builds structured reports and summaries. |
-| `performance_agent` | Reviews performance, latency, capacity, and optimization. |
+| Agent                   | Main responsibility                                                                  |
+| ----------------------- | ------------------------------------------------------------------------------------ |
+| `code_agent`          | Generates, explains, reviews, and debugs code.                                       |
+| `file_agent`          | Reads, writes, searches, and organizes files.                                        |
+| `git_agent`           | Handles Git-oriented operations and explanations.                                    |
+| `database_agent`      | Works with schemas, queries, migrations, and database planning.                      |
+| `testing_agent`       | Creates test plans, test cases, and quality checks.                                  |
+| `qa_agent`            | Supports quality assurance strategy and regression thinking.                         |
+| `migration_agent`     | Plans and describes migrations between systems or schemas.                           |
+| `docs_agent`          | Produces and updates documentation.                                                  |
+| `documentation_agent` | Generates README files, API docs, ADRs, runbooks, and glossaries.                    |
+| `data_agent`          | Supports data processing and analysis workflows.                                     |
+| `nlp_agent`           | Supports text classification, summarization, entities, translation, and intent work. |
+| `analytics_agent`     | Handles analytics reports and insight generation.                                    |
+| `reporting_agent`     | Builds structured reports and summaries.                                             |
+| `performance_agent`   | Reviews performance, latency, capacity, and optimization.                            |
 
 ### DevOps, Cloud, and Platform Agents
 
 These agents support infrastructure, deployment, observability, cloud, Kubernetes, CI/CD, and platform operations.
 
-| Agent | Main responsibility |
-| --- | --- |
-| `devops_agent` | Coordinates deployment and operations workflows. |
-| `cicd_agent` | Works with CI/CD pipelines, releases, and rollback planning. |
-| `sre_agent` | Supports reliability, incidents, SLOs, and operational health. |
-| `incident_agent` | Helps triage and summarize incidents. |
-| `observability_agent` | Works with logs, metrics, alerts, and monitoring plans. |
-| `aws_agent` | Supports AWS-oriented workflows. |
-| `gcp_agent` | Supports Google Cloud workflows. |
-| `azure_agent` | Supports Azure workflows. |
-| `kubernetes_agent` | Supports Kubernetes manifests, scaling, pods, and clusters. |
-| `api_gateway_agent` | Supports API gateway routes, rate limits, CORS, auth, and health. |
-| `workflow_agent` | Creates, validates, and visualizes workflows. |
-| `integration_agent` | Plans and describes service integrations. |
-| `auth_agent` | Supports authentication, tokens, and authorization workflows. |
-| `feature_flag_agent` | Creates, toggles, lists, and evaluates feature flags. |
-| `notification_agent` | Supports notification and message delivery workflows. |
-| `scheduler_agent` | Supports scheduling and calendar-style coordination. |
+| Agent                       | Main responsibility                                                                                        |
+| --------------------------- | ---------------------------------------------------------------------------------------------------------- |
+| `devops_agent`            | Coordinates deployment and operations workflows.                                                           |
+| `cicd_agent`              | Works with CI/CD pipelines, releases, and rollback planning.                                               |
+| `sre_agent`               | Supports reliability, incidents, SLOs, and operational health.                                             |
+| `incident_agent`          | Helps triage and summarize incidents.                                                                      |
+| `observability_agent`     | Works with logs, metrics, alerts, and monitoring plans.                                                    |
+| `aws_agent`               | Supports AWS-oriented workflows.                                                                           |
+| `gcp_agent`               | Supports Google Cloud workflows.                                                                           |
+| `azure_agent`             | Supports Azure workflows.                                                                                  |
+| `kubernetes_agent`        | Supports Kubernetes manifests, scaling, pods, and clusters.                                                |
+| `api_gateway_agent`       | Supports API gateway routes, rate limits, CORS, auth, and health.                                          |
+| `workflow_agent`          | Creates, validates, and visualizes workflows.                                                              |
+| `integration_agent`       | Plans and describes service integrations.                                                                  |
+| `auth_agent`              | Supports authentication, tokens, and authorization workflows.                                              |
+| `feature_flag_agent`      | Creates, toggles, lists, and evaluates feature flags.                                                      |
+| `notification_agent`      | Supports notification and message delivery workflows.                                                      |
+| `scheduler_agent`         | Supports scheduling and calendar-style coordination.                                                       |
 | `execution_backend_agent` | Recommends and catalogs execution backends such as local, Docker, SSH, Modal, Daytona, and Vercel Sandbox. |
-| `os_agent` | Supports operating-system-oriented tasks. |
-| `browser_agent` | Supports browser-oriented tasks and web interaction workflows. |
-| `web_scraping_agent` | Fetches pages, extracts links, inspects forms, and summarizes web content. |
-| `tool_builder_agent` | Generates tool specifications and helper tooling. |
+| `os_agent`                | Supports operating-system-oriented tasks.                                                                  |
+| `browser_agent`           | Supports browser-oriented tasks and web interaction workflows.                                             |
+| `web_scraping_agent`      | Fetches pages, extracts links, inspects forms, and summarizes web content.                                 |
+| `tool_builder_agent`      | Generates tool specifications and helper tooling.                                                          |
 
 ### Security, Governance, and Compliance Agents
 
 These agents help identify risk, prepare policy decisions, and support governance.
 
-| Agent | Main responsibility |
-| --- | --- |
-| `security_agent` | Supports security reviews, dependency scans, secrets checks, and risk summaries. |
-| `compliance_agent` | Supports audits, compliance reports, and gap analysis. |
-| `policy_agent` | Supports policy interpretation and policy drafting. |
-| `approval_agent` | Supports approval workflows and human-in-the-loop gates. |
-| `legal_agent` | Supports legal summaries, contract review, and compliance-oriented reasoning. |
-| `government_agent` | Supports government service, grant, and policy workflows. |
+| Agent                | Main responsibility                                                              |
+| -------------------- | -------------------------------------------------------------------------------- |
+| `security_agent`   | Supports security reviews, dependency scans, secrets checks, and risk summaries. |
+| `compliance_agent` | Supports audits, compliance reports, and gap analysis.                           |
+| `policy_agent`     | Supports policy interpretation and policy drafting.                              |
+| `approval_agent`   | Supports approval workflows and human-in-the-loop gates.                         |
+| `legal_agent`      | Supports legal summaries, contract review, and compliance-oriented reasoning.    |
+| `government_agent` | Supports government service, grant, and policy workflows.                        |
 
 ### Business and Operations Agents
 
 These agents help with sales, finance, support, marketing, people operations, and business process work.
 
-| Agent | Main responsibility |
-| --- | --- |
-| `finance_agent` | Supports financial summaries, forecasts, and budget reasoning. |
-| `sales_agent` | Supports sales planning, lead qualification, and proposal outlines. |
-| `payments_agent` | Supports payment, invoice, refund, subscription, and analytics flows. |
-| `cost_agent` | Supports cost reports, forecasts, and optimization. |
-| `procurement_agent` | Supports purchasing, vendor, and procurement workflows. |
-| `customer_support_agent` | Supports support response and ticket workflows. |
-| `customer_success_agent` | Supports success plans, risk summaries, and customer health. |
-| `marketing_agent` | Supports campaign, messaging, and marketing planning. |
-| `social_media_agent` | Supports content calendars, drafts, sentiment, and moderation. |
-| `hr_agent` | Supports HR plans, policy summaries, and people operations. |
-| `recruiting_agent` | Supports candidate and recruiting workflows. |
-| `onboarding_agent` | Supports onboarding plans and checklists. |
-| `project_management_agent` | Supports projects, sprints, risks, and delivery planning. |
-| `jira_agent` | Supports Jira issue and project-tracking workflows. |
-| `comms_agent` | Supports communication drafts and internal updates. |
-| `feedback_agent` | Supports feedback collection and improvement loops. |
+| Agent                        | Main responsibility                                                   |
+| ---------------------------- | --------------------------------------------------------------------- |
+| `finance_agent`            | Supports financial summaries, forecasts, and budget reasoning.        |
+| `sales_agent`              | Supports sales planning, lead qualification, and proposal outlines.   |
+| `payments_agent`           | Supports payment, invoice, refund, subscription, and analytics flows. |
+| `cost_agent`               | Supports cost reports, forecasts, and optimization.                   |
+| `procurement_agent`        | Supports purchasing, vendor, and procurement workflows.               |
+| `customer_support_agent`   | Supports support response and ticket workflows.                       |
+| `customer_success_agent`   | Supports success plans, risk summaries, and customer health.          |
+| `marketing_agent`          | Supports campaign, messaging, and marketing planning.                 |
+| `social_media_agent`       | Supports content calendars, drafts, sentiment, and moderation.        |
+| `hr_agent`                 | Supports HR plans, policy summaries, and people operations.           |
+| `recruiting_agent`         | Supports candidate and recruiting workflows.                          |
+| `onboarding_agent`         | Supports onboarding plans and checklists.                             |
+| `project_management_agent` | Supports projects, sprints, risks, and delivery planning.             |
+| `jira_agent`               | Supports Jira issue and project-tracking workflows.                   |
+| `comms_agent`              | Supports communication drafts and internal updates.                   |
+| `feedback_agent`           | Supports feedback collection and improvement loops.                   |
 
 ### Industry and Domain Agents
 
 These agents provide domain-specific support for common verticals.
 
-| Agent | Main responsibility |
-| --- | --- |
-| `healthcare_agent` | Supports healthcare summaries and operational workflows. |
-| `education_agent` | Supports lesson plans, quizzes, learning paths, and rubrics. |
-| `real_estate_agent` | Supports listings, real estate summaries, and investment reasoning. |
-| `ecommerce_agent` | Supports product listings, commerce operations, and pricing workflows. |
-| `insurance_agent` | Supports policy summaries, claims, fraud signals, and underwriting checklists. |
-| `logistics_agent` | Supports routing, shipments, warehouse summaries, and demand buffers. |
-| `hospitality_agent` | Supports hospitality planning and service workflows. |
-| `travel_agent` | Supports travel planning and related operations. |
-| `manufacturing_agent` | Supports manufacturing plans and operational summaries. |
-| `agriculture_agent` | Supports crop plans, harvest schedules, field risk, and input budgets. |
-| `energy_agent` | Supports energy usage, planning, and sustainability workflows. |
-| `sustainability_agent` | Supports ESG, supply chain, waste, water, and sustainability scoring. |
-| `blockchain_agent` | Supports wallet risk, tokenomics, smart contract checklists, and transactions. |
-| `iot_agent` | Supports IoT fleet, telemetry, and device operations. |
-| `media_agent` | Supports media planning, production schedules, and distribution plans. |
-| `design_agent` | Supports product and interface design planning. |
-| `multimodal_agent` | Supports workflows involving multiple content types. |
-| `simulation_agent` | Supports simulation planning and scenario analysis. |
+| Agent                    | Main responsibility                                                            |
+| ------------------------ | ------------------------------------------------------------------------------ |
+| `healthcare_agent`     | Supports healthcare summaries and operational workflows.                       |
+| `education_agent`      | Supports lesson plans, quizzes, learning paths, and rubrics.                   |
+| `real_estate_agent`    | Supports listings, real estate summaries, and investment reasoning.            |
+| `ecommerce_agent`      | Supports product listings, commerce operations, and pricing workflows.         |
+| `insurance_agent`      | Supports policy summaries, claims, fraud signals, and underwriting checklists. |
+| `logistics_agent`      | Supports routing, shipments, warehouse summaries, and demand buffers.          |
+| `hospitality_agent`    | Supports hospitality planning and service workflows.                           |
+| `travel_agent`         | Supports travel planning and related operations.                               |
+| `manufacturing_agent`  | Supports manufacturing plans and operational summaries.                        |
+| `agriculture_agent`    | Supports crop plans, harvest schedules, field risk, and input budgets.         |
+| `energy_agent`         | Supports energy usage, planning, and sustainability workflows.                 |
+| `sustainability_agent` | Supports ESG, supply chain, waste, water, and sustainability scoring.          |
+| `blockchain_agent`     | Supports wallet risk, tokenomics, smart contract checklists, and transactions. |
+| `iot_agent`            | Supports IoT fleet, telemetry, and device operations.                          |
+| `media_agent`          | Supports media planning, production schedules, and distribution plans.         |
+| `design_agent`         | Supports product and interface design planning.                                |
+| `multimodal_agent`     | Supports workflows involving multiple content types.                           |
+| `simulation_agent`     | Supports simulation planning and scenario analysis.                            |
 
 ## Installation Guide
 
@@ -822,18 +823,18 @@ limbi --list-agents
 
 The on-screen command list is intentionally short:
 
-| Command | Description |
-|---------|-------------|
+| Command     | Description                                       |
+| ----------- | ------------------------------------------------- |
 | `/models` | Choose provider and model for the current session |
-| `/keys` | Manage saved API keys for providers |
-| `/skills` | Open the custom skill manager |
-| `/skill` | Run a saved custom skill with a task |
-| `/agents` | Manually choose an agent and run one action |
-| `/agent` | Alias for `/agents` |
-| `/trust` | Show workspace trust status |
-| `/clear` | Clear conversation history |
-| `/help` | Show the short help list |
-| `/quit` | Exit Limbi |
+| `/keys`   | Manage saved API keys for providers               |
+| `/skills` | Open the custom skill manager                     |
+| `/skill`  | Run a saved custom skill with a task              |
+| `/agents` | Manually choose an agent and run one action       |
+| `/agent`  | Alias for `/agents`                             |
+| `/trust`  | Show workspace trust status                       |
+| `/clear`  | Clear conversation history                        |
+| `/help`   | Show the short help list                          |
+| `/quit`   | Exit Limbi                                        |
 
 Advanced commands like `/trace`, `/traces`, `/permissions`, `/eval`, `/benchmark`, `/list`,
 `/providers`, `/model`, and `/key` still exist, but they are kept out of the main banner so
@@ -841,18 +842,18 @@ the CLI stays focused during normal work.
 
 ## Provider Configuration
 
-| Variable | Default | Purpose |
-| --- | --- | --- |
-| `LLM_PROVIDER` | `ollama` | Provider to use. |
-| `LLM_MODEL` | `llama3.2:3b` | Model name. |
-| `LLM_API_KEY` | Empty | API key for hosted providers. |
-| `LLM_BASE_URL` | `http://localhost:11434` | Provider base URL. |
-| `LLM_TEMPERATURE` | `0.2` | Sampling temperature. |
-| `LLM_MAX_TOKENS` | `2048` | Maximum output tokens. |
-| `AZURE_DEPLOYMENT` | Empty | Azure OpenAI deployment name. |
-| `AZURE_API_VERSION` | `2024-06-01` | Azure OpenAI API version. |
-| `LIMBI_API_KEY` | Empty | Optional API key required by the HTTP backend. |
-| `LIMBI_CORS_ORIGINS` | Localhost defaults | Comma-separated browser origins allowed to call the backend. |
+| Variable               | Default                    | Purpose                                                      |
+| ---------------------- | -------------------------- | ------------------------------------------------------------ |
+| `LLM_PROVIDER`       | `ollama`                 | Provider to use.                                             |
+| `LLM_MODEL`          | `llama3.2:3b`            | Model name.                                                  |
+| `LLM_API_KEY`        | Empty                      | API key for hosted providers.                                |
+| `LLM_BASE_URL`       | `http://localhost:11434` | Provider base URL.                                           |
+| `LLM_TEMPERATURE`    | `0.2`                    | Sampling temperature.                                        |
+| `LLM_MAX_TOKENS`     | `2048`                   | Maximum output tokens.                                       |
+| `AZURE_DEPLOYMENT`   | Empty                      | Azure OpenAI deployment name.                                |
+| `AZURE_API_VERSION`  | `2024-06-01`             | Azure OpenAI API version.                                    |
+| `LIMBI_API_KEY`      | Empty                      | Optional API key required by the HTTP backend.               |
+| `LIMBI_CORS_ORIGINS` | Localhost defaults         | Comma-separated browser origins allowed to call the backend. |
 
 If you enable `LIMBI_API_KEY`, set the same value in the VS Code setting `limbi.apiKey` so the extension can keep working.
 
@@ -1048,17 +1049,17 @@ uvicorn main:app --reload
 
 Useful endpoints:
 
-| Endpoint | Purpose |
-| --- | --- |
-| `GET /health` | Backend health. |
-| `POST /api/chat` | Send a chat message. |
-| `POST /api/chat/clear` | Clear chat history. |
-| `GET /api/agents` | List agents. |
-| `POST /api/agents/{agent_name}/{action}` | Run a specific agent action. |
-| `GET /api/audit/executions` | View recent executions. |
-| `GET /api/audit/stats` | View execution statistics. |
-| `POST /api/rag/ingest` | Index a directory for RAG. |
-| `GET /api/rag/stats` | View vector store statistics. |
+| Endpoint                                   | Purpose                       |
+| ------------------------------------------ | ----------------------------- |
+| `GET /health`                            | Backend health.               |
+| `POST /api/chat`                         | Send a chat message.          |
+| `POST /api/chat/clear`                   | Clear chat history.           |
+| `GET /api/agents`                        | List agents.                  |
+| `POST /api/agents/{agent_name}/{action}` | Run a specific agent action.  |
+| `GET /api/audit/executions`              | View recent executions.       |
+| `GET /api/audit/stats`                   | View execution statistics.    |
+| `POST /api/rag/ingest`                   | Index a directory for RAG.    |
+| `GET /api/rag/stats`                     | View vector store statistics. |
 
 Example:
 
