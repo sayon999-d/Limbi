@@ -178,6 +178,30 @@
       align-items: center;
       justify-content: space-between;
       gap: 20px;
+      background: rgba(255, 255, 255, 0.28);
+      backdrop-filter: blur(28px) saturate(1.45);
+      -webkit-backdrop-filter: blur(28px) saturate(1.45);
+      border: 1px solid rgba(255, 255, 255, 0.42);
+      box-shadow:
+        0 14px 40px rgba(16, 32, 24, 0.06),
+        inset 0 1px 0 rgba(255, 255, 255, 0.7);
+      overflow: hidden;
+    }
+
+    .topbar::before {
+      content: "";
+      position: absolute;
+      inset: 0;
+      background: linear-gradient(
+        120deg,
+        rgba(255,255,255,0.34) 0%,
+        rgba(255,255,255,0.12) 24%,
+        rgba(255,255,255,0.02) 58%,
+        rgba(255,255,255,0.08) 100%
+      );
+      pointer-events: none;
+      mix-blend-mode: screen;
+      opacity: 0.8;
     }
 
     .brand {
@@ -264,7 +288,9 @@
       padding: 10px 14px;
       border: 1px solid rgba(20, 196, 109, 0.22);
       border-radius: 999px;
-      background: rgba(255,255,255,0.6);
+      background: rgba(255,255,255,0.34);
+      backdrop-filter: blur(18px);
+      -webkit-backdrop-filter: blur(18px);
     }
 
     .hero {
