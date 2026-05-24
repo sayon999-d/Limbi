@@ -84,6 +84,8 @@ What was added:
   original shell selection.
 - Graph-backed session memory with episodic logs and a persistent user model that survives
   restarts.
+- A provider-neutral `agent.md` file that Limbi loads as shared guidance for every agent
+  and every model provider.
 - Better source-grounded URL research for prompts that include links.
 - Direct internet research for prompts without URLs, with live Google or DuckDuckGo search
   paths selected automatically from the prompt.
@@ -201,6 +203,7 @@ What Limbi prioritizes:
 - Human control through `/models`, `/agent`, `/agents`, and `/keys` so you can guide the system when needed.
 - Clear runtime feedback, audit logs, and context sharing so results are easier to trust and review.
 - Local-first behavior for laptop users, including support for smaller models when memory is limited.
+- A shared `agent.md` guide that can steer all agents and providers from one markdown file.
 
 What Limbi does not try to optimize for:
 
@@ -210,6 +213,12 @@ What Limbi does not try to optimize for:
 - Locking you into one provider or one cloud vendor.
 
 In practice, that means Limbi is better suited for tasks where the answer is only part of the job. It is designed to plan, route, remember, fetch, write, compare, and track the work as it happens.
+
+### Shared Agent Guide
+
+Limbi can load a plain Markdown file named `agent.md` from the workspace root, or a workspace override from `.limbi/agent.md`, and inject that guide into the system prompt and shared session context.
+
+The guide is provider-neutral. The same instructions apply to local models, hosted models, routers, and future agent types without requiring provider-specific syntax or a separate prompt format.
 
 ## How Limbi Works
 

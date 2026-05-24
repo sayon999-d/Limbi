@@ -12,6 +12,7 @@ logger = logging.getLogger("limbi.workspace")
 
 WORKSPACE_DIR_NAME = ".limbi"
 SKILL_HUB_DIR_NAME = "skill_hub"
+AGENT_GUIDE_FILENAMES = ("agent.md", ".limbi/agent.md")
 API_KEYS_CONFIG_KEY = "provider_api_keys"
 PREFERRED_MODELS_CONFIG_KEY = "preferred_models"
 CUSTOM_SKILLS_CONFIG_KEY = "custom_skills"
@@ -253,6 +254,31 @@ def get_workspace_path(base_dir: str | None = None) -> Path:
 
 def get_workspace_root(base_dir: str | None = None) -> Path:
     return get_workspace_path(base_dir).parent
+
+
+def resolve_agent_guide_path(base_dir: str | None = None) -> Path | None:
+    root = get_workspace_root(base_dir)
+    workspace = get_workspace_path(base_dir)
+    for candidate in (root / AGENT_GUIDE_FILENAMES[0], workspace / "agent.md"):
+        if candidate.exists() and candidate.is_file():
+            return candidate
+    return None
+
+
+def load_agent_guide_text(base_dir: str | None = None, max_chars: int = 6000) -> str:
+    guide_path = resolve_agent_guide_path(base_dir)
+    if not guide_path:
+        return ""
+    try:
+        text = guide_path.read_text(encoding="utf-8")
+    except OSError:
+        return ""
+    cleaned = text.replace("\r\n", "\n").replace("\r", "\n").strip()
+    if not cleaned:
+        return ""
+    if max_chars > 0 and len(cleaned) > max_chars:
+        cleaned = cleaned[: max_chars - 3].rstrip() + "..."
+    return cleaned
 
 
 def init_workspace(base_dir: str | None = None) -> dict[str, Any]:

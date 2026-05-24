@@ -30,7 +30,7 @@ from .agents.context_memory_agent import (
 from .runtime_metrics import build_runtime_metrics
 from .permissions import evaluate_permission, require_permission
 from .tracing import start_trace, record_trace_event, finish_trace
-from .workspace import get_workspace_root, load_config
+from .workspace import get_workspace_root, load_agent_guide_text, load_config, resolve_agent_guide_path
 
 logger = logging.getLogger("limbi.orchestrator")
 
@@ -105,6 +105,9 @@ When you decide an action needs to be executed in the real world, include a \
 - Use the shared agent context to understand what other agents have already
   done in this session. This helps you avoid redundant work and build on
   earlier findings.
+
+## Agent.md Foundation
+{agent_guide}
 
 {recent_executions}
 
@@ -1469,6 +1472,15 @@ class Orchestrator:
                 },
             )
         _emit_progress(progress_callback, "Calculating runtime budget")
+        agent_guide_text = load_agent_guide_text()
+        if agent_guide_text:
+            try:
+                set_shared_state_value(self._session_id, "agent_guide", agent_guide_text)
+                guide_path = resolve_agent_guide_path()
+                if guide_path:
+                    set_shared_state_value(self._session_id, "agent_guide_path", str(guide_path))
+            except Exception:
+                pass
         recent_execs = "" if research_mode else _build_recent_executions_text()
         shared_ctx = get_session_context(
             self._session_id,
@@ -1520,6 +1532,7 @@ class Orchestrator:
         )
         system_text = SYSTEM_PROMPT.format(
             agent_registry=agent_registry,
+            agent_guide=agent_guide_text if agent_guide_text else "",
             rag_context=rag_context,
             url_research_context=url_research_context,
             web_research_context=web_research_context,
@@ -1824,6 +1837,15 @@ class Orchestrator:
                 },
             )
         _emit_progress(progress_callback, "Calculating runtime budget")
+        agent_guide_text = load_agent_guide_text()
+        if agent_guide_text:
+            try:
+                set_shared_state_value(self._session_id, "agent_guide", agent_guide_text)
+                guide_path = resolve_agent_guide_path()
+                if guide_path:
+                    set_shared_state_value(self._session_id, "agent_guide_path", str(guide_path))
+            except Exception:
+                pass
         agent_registry = _build_agent_registry_text(compact=task_profile["level"] == "simple" and task_route == "direct")
         recent_execs = "" if research_mode else _build_recent_executions_text()
         shared_ctx = get_session_context(
@@ -1875,6 +1897,7 @@ class Orchestrator:
         )
         system_text = SYSTEM_PROMPT.format(
             agent_registry=agent_registry,
+            agent_guide=agent_guide_text if agent_guide_text else "",
             rag_context=rag_context,
             url_research_context=url_research_context,
             web_research_context=web_research_context,

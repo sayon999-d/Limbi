@@ -185,7 +185,7 @@ _LOW_MEMORY_LOCAL_MODELS = {
 }
 
 _OLLAMA_CLOUD_MODELS = [
-    "deepseek-v3.1.8.1b-cloud",
+    "deepseek-v3.1.8.2b-cloud",
     "qwen3-coder:480b-cloud",
     "gpt-oss:120b-cloud",
     "gpt-oss:20b-cloud",
@@ -227,7 +227,7 @@ def _print_banner(console):
 
     title = Text()
     title.append("LIMBI", style="bold bright_green")
-    title.append(" v1.8.1", style="bold white")
+    title.append(" v1.8.2", style="bold white")
     title.append(" - Omni-Agent Orchestrator", style="white")
 
     help_line = Text()
@@ -2108,7 +2108,7 @@ Type a natural-language prompt to talk to Limbi.
     default=False,
     help="Skip workspace trust prompt (for CI/automation).",
 )
-@click.version_option(version="1.8.1", prog_name="limbi")
+@click.version_option(version="1.8.2", prog_name="limbi")
 def main(
     prompt: str | None,
     provider: str | None,

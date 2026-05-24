@@ -870,6 +870,8 @@ def get_session_context(
     if state_snapshot:
         lines.append("### Session State")
         for key in (
+            "agent_guide",
+            "agent_guide_path",
             "current_goal",
             "current_focus",
             "current_route",
