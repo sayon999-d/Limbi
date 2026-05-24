@@ -1163,31 +1163,25 @@ python -m pip install --upgrade limbi
 python -m limbi --generate-mcp-config
 ```
 
-## GitHub Actions Publishing
+## GitHub Pages Deployment
 
-You can publish Limbi to PyPI from GitHub Actions with Twine.
+The website for Limbi is deployed through GitHub Actions and GitHub Pages.
 
-1. Add this repository secret in GitHub:
+1. The site content lives in `website/index.html`.
+2. The workflow in `.github/workflows/pages.yml` publishes the `website/` directory to GitHub Pages.
+3. Any push to `main` that changes `website/**` will trigger a fresh deployment.
 
-```text
-PYPI_API_TOKEN
-```
+If you want to read the project structure first, start with the docs section on the website. It maps the README into a simpler overview of:
 
-2. Create a GitHub Release or run the workflow manually from the Actions tab.
-3. The workflow in `.github/workflows/publish.yml` will:
-   - install build tools
-   - build the package
-   - run `twine check`
-   - upload the distributions with `python -m twine upload --skip-existing`
+- what Limbi is
+- how it works
+- agent categories
+- installation paths
+- provider modes
+- troubleshooting
+- deployment notes
 
-The workflow uses:
-
-```text
-TWINE_USERNAME=__token__
-TWINE_PASSWORD=${{ secrets.PYPI_API_TOKEN }}
-```
-
-Keep bumping the package version before each release, because PyPI will reject any file name that already exists.
+If you want to change the website later, edit `website/index.html` and push the branch again.
 
 ### `chromadb not installed`
 
