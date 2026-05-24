@@ -1037,6 +1037,10 @@
       .hero-aside {
         min-height: auto;
       }
+
+      .feature-stack {
+        position: static;
+      }
     }
 
     @media (max-width: 920px) {
@@ -1055,6 +1059,9 @@
 
       .section-head {
         grid-template-columns: 1fr;
+        gap: 10px;
+        align-items: start;
+        margin-bottom: 22px;
       }
 
       .topbar {
@@ -1065,6 +1072,12 @@
 
       .nav {
         justify-content: flex-start;
+        gap: 12px;
+        row-gap: 8px;
+      }
+
+      .hero {
+        gap: 22px;
       }
     }
 
@@ -1082,6 +1095,19 @@
         padding: 72px 0 60px;
       }
 
+      .hero-aside {
+        margin-top: 4px;
+      }
+
+      .feature-stack {
+        gap: 12px;
+      }
+
+      .terminal {
+        min-height: auto;
+        padding: 18px;
+      }
+
       .stats {
         grid-template-columns: 1fr;
       }
@@ -1091,7 +1117,28 @@
       }
 
       h1 {
+        font-size: clamp(2.5rem, 13vw, 4rem);
         max-width: 100%;
+      }
+
+      .section-title {
+        max-width: 100%;
+      }
+
+      .card,
+      .step,
+      .agent-cluster,
+      .terminal-box,
+      .provider {
+        min-width: 0;
+      }
+
+      .card-copy,
+      .step-copy,
+      .section-copy,
+      .lede {
+        overflow-wrap: anywhere;
+        word-break: normal;
       }
     }
   </style>
