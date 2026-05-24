@@ -1249,11 +1249,12 @@
         <div class="section-head reveal">
           <div>
             <div class="section-kicker">Docs</div>
-            <h2 class="section-title">Read the structure first</h2>
+            <h2 class="section-title">Read the structure before you run it</h2>
           </div>
           <p class="section-copy">
-            This section mirrors the README structure so visitors can quickly understand the
-            product before installing or deploying anything.
+            These notes walk through Limbi in the same order a new user usually needs it:
+            what it is, how it behaves, how to install it, and what happens after a prompt
+            enters the system.
           </p>
         </div>
 
@@ -1261,22 +1262,38 @@
           <div class="card">
             <div class="card-tag">Doc 01</div>
             <h3 class="card-title">Start here</h3>
-            <p class="card-copy">What Limbi is, why it exists, and the problem it solves.</p>
+            <p class="card-copy">
+              Limbi is not just a chat wrapper. It is an orchestration layer that chooses
+              providers, routes tasks to agents, keeps workspace state, and tries to make the
+              result auditable and repeatable.
+            </p>
           </div>
           <div class="card">
             <div class="card-tag">Doc 02</div>
             <h3 class="card-title">Installation</h3>
-            <p class="card-copy">Homebrew, curl installer, and pip install paths, plus troubleshooting notes.</p>
+            <p class="card-copy">
+              You can install Limbi with Homebrew, the one-line curl installer, or pip. The
+              docs explain when each route makes sense, plus what to check if the local setup
+              or tap gets out of sync.
+            </p>
           </div>
           <div class="card">
             <div class="card-tag">Doc 03</div>
             <h3 class="card-title">How it works</h3>
-            <p class="card-copy">Prompt flow, orchestrator lifecycle, agent delegation, and shared memory.</p>
+            <p class="card-copy">
+              A prompt enters the CLI, the orchestrator loads memory and workspace context,
+              decides whether the task should be researched, delegated, or handled directly,
+              and then returns a concise answer with traces and runtime metrics.
+            </p>
           </div>
           <div class="card">
             <div class="card-tag">Doc 04</div>
             <h3 class="card-title">Deploy and operate</h3>
-            <p class="card-copy">GitHub Pages deployment, GitHub Actions workflow, providers, and runtime notes.</p>
+            <p class="card-copy">
+              The website ships through GitHub Pages and GitHub Actions. The product itself
+              can run locally, with hosted providers, or through the provider modes and
+              runtime settings described in the README.
+            </p>
           </div>
         </div>
 
@@ -1284,9 +1301,10 @@
           <div class="card-tag">Structure</div>
           <h3 class="card-title">README map</h3>
           <p class="card-copy">
-            Focus, how it works, agent catalog, capabilities, install, provider modes,
-            troubleshooting, and deployment notes are all laid out in the README so readers can
-            move from the website into the product docs without guesswork.
+            The README follows the same path as the site: project focus, runtime behavior,
+            agent catalog, capabilities, installation, provider selection, troubleshooting,
+            and deployment. That means a visitor can start on the website and still find the
+            deeper technical shape of Limbi without having to guess where to look next.
           </p>
         </div>
       </section>
