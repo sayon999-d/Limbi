@@ -5,6 +5,7 @@ import json
 import logging
 import os
 import time
+import sys
 from pathlib import Path
 from typing import Any
 
@@ -16,6 +17,8 @@ AGENT_GUIDE_FILENAMES = ("agent.md", ".limbi/agent.md")
 API_KEYS_CONFIG_KEY = "provider_api_keys"
 PREFERRED_MODELS_CONFIG_KEY = "preferred_models"
 CUSTOM_SKILLS_CONFIG_KEY = "custom_skills"
+CUSTOM_MCP_SERVERS_CONFIG_KEY = "custom_mcp_servers"
+CUSTOM_MCP_PLUGINS_CONFIG_KEY = "custom_mcp_plugins"
 PERMISSIONS_CONFIG_KEY = "permissions"
 
 _DEFAULT_PERMISSION_POLICY = {
@@ -48,6 +51,8 @@ _DEFAULT_CONFIG = {
     API_KEYS_CONFIG_KEY: {},
     PREFERRED_MODELS_CONFIG_KEY: {},
     CUSTOM_SKILLS_CONFIG_KEY: {},
+    CUSTOM_MCP_SERVERS_CONFIG_KEY: {},
+    CUSTOM_MCP_PLUGINS_CONFIG_KEY: {},
     PERMISSIONS_CONFIG_KEY: _DEFAULT_PERMISSION_POLICY,
 }
 
@@ -134,6 +139,139 @@ def _normalize_custom_skills(config: dict[str, Any]) -> dict[str, Any]:
             "hub_url": str(skill.get("hub_url", "")).strip(),
         }
     normalized[CUSTOM_SKILLS_CONFIG_KEY] = cleaned
+    return normalized
+
+
+def _normalize_string_list(value: Any) -> list[str]:
+    if not isinstance(value, list):
+        return []
+    cleaned: list[str] = []
+    for item in value:
+        text = str(item or "").strip()
+        if text:
+            cleaned.append(text)
+    return cleaned
+
+
+def _normalize_env_map(value: Any) -> dict[str, str]:
+    if not isinstance(value, dict):
+        return {}
+    return {
+        str(key).strip(): str(item).strip()
+        for key, item in value.items()
+        if str(key).strip() and str(item).strip()
+    }
+
+
+def _normalize_mcp_server(name: str, server: Any, *, source: str = "", plugin: str = "") -> dict[str, Any]:
+    payload = server if isinstance(server, dict) else {}
+    normalized_name = str(name or payload.get("name") or "").strip()
+    if not normalized_name:
+        return {}
+
+    server_type = str(payload.get("type") or "").strip().lower()
+    command = str(payload.get("command") or "").strip()
+    url = str(payload.get("url") or "").strip()
+    if not server_type:
+        server_type = "stdio" if command else "sse" if url else "stdio"
+
+    args = payload.get("args")
+    if not isinstance(args, list):
+        args = []
+
+    cleaned: dict[str, Any] = {
+        "name": normalized_name,
+        "type": server_type,
+        "description": str(payload.get("description") or "").strip(),
+        "enabled": bool(payload.get("enabled", True)),
+        "command": command,
+        "args": _normalize_string_list(args),
+        "env": _normalize_env_map(payload.get("env")),
+        "url": url,
+        "cwd": str(payload.get("cwd") or "").strip(),
+        "source": str(payload.get("source") or source).strip(),
+        "plugin": str(payload.get("plugin") or plugin).strip(),
+    }
+
+    # Preserve any extra fields users may want to pass through to mcp.json.
+    for key, value in payload.items():
+        if key in cleaned or key in {"args", "env"}:
+            continue
+        if value is None:
+            continue
+        cleaned[key] = value
+
+    # Drop empty values that would only add noise to generated configs.
+    return {key: value for key, value in cleaned.items() if value not in ("", [], {}, None) or key in {"enabled", "args", "env"}}
+
+
+def _normalize_mcp_server_collection(
+    value: Any,
+    *,
+    source: str = "",
+    plugin: str = "",
+) -> dict[str, dict[str, Any]]:
+    if not isinstance(value, dict):
+        return {}
+    cleaned: dict[str, dict[str, Any]] = {}
+    for raw_name, raw_server in value.items():
+        server = _normalize_mcp_server(str(raw_name), raw_server, source=source, plugin=plugin)
+        if server:
+            cleaned[server["name"]] = server
+    return cleaned
+
+
+def _normalize_custom_mcp_servers(config: dict[str, Any]) -> dict[str, Any]:
+    normalized = dict(config)
+    servers = normalized.get(CUSTOM_MCP_SERVERS_CONFIG_KEY)
+    if not isinstance(servers, dict):
+        servers = {}
+    normalized[CUSTOM_MCP_SERVERS_CONFIG_KEY] = _normalize_mcp_server_collection(servers, source="workspace")
+    return normalized
+
+
+def _normalize_custom_mcp_plugins(config: dict[str, Any]) -> dict[str, Any]:
+    normalized = dict(config)
+    plugins = normalized.get(CUSTOM_MCP_PLUGINS_CONFIG_KEY)
+    if not isinstance(plugins, dict):
+        plugins = {}
+
+    cleaned: dict[str, dict[str, Any]] = {}
+    for raw_name, raw_plugin in plugins.items():
+        plugin = raw_plugin if isinstance(raw_plugin, dict) else {}
+        name = str(raw_name or plugin.get("name") or "").strip().lower().replace(" ", "-")
+        if not name:
+            continue
+
+        servers = plugin.get("servers")
+        if isinstance(servers, list):
+            server_map = {}
+            for idx, item in enumerate(servers):
+                item_name = str((item or {}).get("name") or f"server-{idx+1}").strip()
+                server_map[item_name] = item
+        else:
+            server_map = servers if isinstance(servers, dict) else {}
+
+        cleaned[name] = {
+            "name": name,
+            "description": str(plugin.get("description", "")).strip(),
+            "version": str(plugin.get("version", "")).strip() or "1.0.0",
+            "enabled": bool(plugin.get("enabled", True)),
+            "source": str(plugin.get("source", "")).strip(),
+            "servers": _normalize_mcp_server_collection(server_map, source="plugin", plugin=name),
+            "tags": _normalize_string_list(plugin.get("tags")),
+            "env": _normalize_env_map(plugin.get("env")),
+            "metadata": plugin.get("metadata") if isinstance(plugin.get("metadata"), dict) else {},
+        }
+
+        for key, value in plugin.items():
+            if key in cleaned[name] or key in {"servers", "tags", "env", "metadata"}:
+                continue
+            if value is None:
+                continue
+            cleaned[name][key] = value
+
+    normalized[CUSTOM_MCP_PLUGINS_CONFIG_KEY] = cleaned
     return normalized
 
 
@@ -319,7 +457,13 @@ def init_workspace(base_dir: str | None = None) -> dict[str, Any]:
 
         config_path.write_text(
             json.dumps(
-                _normalize_permissions(_normalize_custom_skills(_normalize_provider_api_keys(config))),
+                _normalize_permissions(
+                    _normalize_custom_mcp_plugins(
+                        _normalize_custom_mcp_servers(
+                            _normalize_custom_skills(_normalize_provider_api_keys(config))
+                        )
+                    )
+                ),
                 indent=2,
             )
             + "\n",
@@ -382,7 +526,13 @@ def load_config(base_dir: str | None = None) -> dict[str, Any]:
     if config_path.exists():
         try:
             loaded = json.loads(config_path.read_text(encoding="utf-8"))
-            normalized = _normalize_permissions(_normalize_custom_skills(_normalize_provider_api_keys(loaded)))
+            normalized = _normalize_permissions(
+                _normalize_custom_mcp_plugins(
+                    _normalize_custom_mcp_servers(
+                        _normalize_custom_skills(_normalize_provider_api_keys(loaded))
+                    )
+                )
+            )
             if normalized != loaded:
                 save_config(normalized, base_dir=base_dir)
             return normalized
@@ -397,7 +547,13 @@ def save_config(config: dict[str, Any], base_dir: str | None = None) -> None:
     config_path = ws / "config.json"
     config_path.write_text(
         json.dumps(
-            _normalize_permissions(_normalize_custom_skills(_normalize_provider_api_keys(config))),
+            _normalize_permissions(
+                _normalize_custom_mcp_plugins(
+                    _normalize_custom_mcp_servers(
+                        _normalize_custom_skills(_normalize_provider_api_keys(config))
+                    )
+                )
+            ),
             indent=2,
         )
         + "\n",
@@ -650,3 +806,169 @@ def list_skill_hub(base_dir: str | None = None) -> list[dict[str, Any]]:
                 }
             )
     return items
+
+
+def get_custom_mcp_servers(config: dict[str, Any]) -> dict[str, dict[str, Any]]:
+    servers = config.get(CUSTOM_MCP_SERVERS_CONFIG_KEY)
+    if not isinstance(servers, dict):
+        return {}
+    normalized = _normalize_custom_mcp_servers({CUSTOM_MCP_SERVERS_CONFIG_KEY: servers})
+    return normalized.get(CUSTOM_MCP_SERVERS_CONFIG_KEY, {})
+
+
+def get_custom_mcp_server(config: dict[str, Any], name: str) -> dict[str, Any]:
+    servers = get_custom_mcp_servers(config)
+    return dict(servers.get(str(name).strip().lower().replace(" ", "-"), {}))
+
+
+def set_custom_mcp_server(
+    config: dict[str, Any],
+    name: str,
+    server: dict[str, Any],
+) -> dict[str, Any]:
+    normalized = dict(config)
+    servers = get_custom_mcp_servers(normalized)
+    server_name = str(name).strip().lower().replace(" ", "-")
+    if not server_name:
+        return normalized
+    payload = dict(server)
+    payload["name"] = server_name
+    servers[server_name] = _normalize_mcp_server(server_name, payload, source="workspace")
+    normalized[CUSTOM_MCP_SERVERS_CONFIG_KEY] = servers
+    return _normalize_custom_mcp_servers(normalized)
+
+
+def delete_custom_mcp_server(config: dict[str, Any], name: str) -> dict[str, Any]:
+    normalized = dict(config)
+    servers = get_custom_mcp_servers(normalized)
+    server_name = str(name).strip().lower().replace(" ", "-")
+    servers.pop(server_name, None)
+    normalized[CUSTOM_MCP_SERVERS_CONFIG_KEY] = servers
+    return normalized
+
+
+def get_custom_mcp_plugins(config: dict[str, Any]) -> dict[str, dict[str, Any]]:
+    plugins = config.get(CUSTOM_MCP_PLUGINS_CONFIG_KEY)
+    if not isinstance(plugins, dict):
+        return {}
+    normalized = _normalize_custom_mcp_plugins({CUSTOM_MCP_PLUGINS_CONFIG_KEY: plugins})
+    return normalized.get(CUSTOM_MCP_PLUGINS_CONFIG_KEY, {})
+
+
+def get_custom_mcp_plugin(config: dict[str, Any], name: str) -> dict[str, Any]:
+    plugins = get_custom_mcp_plugins(config)
+    return dict(plugins.get(str(name).strip().lower().replace(" ", "-"), {}))
+
+
+def set_custom_mcp_plugin(
+    config: dict[str, Any],
+    name: str,
+    plugin: dict[str, Any],
+) -> dict[str, Any]:
+    normalized = dict(config)
+    plugins = get_custom_mcp_plugins(normalized)
+    plugin_name = str(name).strip().lower().replace(" ", "-")
+    if not plugin_name:
+        return normalized
+    payload = dict(plugin)
+    payload["name"] = plugin_name
+    plugins[plugin_name] = _normalize_custom_mcp_plugins({CUSTOM_MCP_PLUGINS_CONFIG_KEY: {plugin_name: payload}})[CUSTOM_MCP_PLUGINS_CONFIG_KEY][plugin_name]
+    normalized[CUSTOM_MCP_PLUGINS_CONFIG_KEY] = plugins
+    return _normalize_custom_mcp_plugins(normalized)
+
+
+def delete_custom_mcp_plugin(config: dict[str, Any], name: str) -> dict[str, Any]:
+    normalized = dict(config)
+    plugins = get_custom_mcp_plugins(normalized)
+    plugin_name = str(name).strip().lower().replace(" ", "-")
+    plugins.pop(plugin_name, None)
+    normalized[CUSTOM_MCP_PLUGINS_CONFIG_KEY] = plugins
+    return normalized
+
+
+def _dedupe_mcp_server_name(existing: dict[str, Any], name: str, source_prefix: str = "") -> str:
+    base = str(name or "").strip()
+    if source_prefix:
+        base = f"{source_prefix}__{base}"
+    candidate = base
+    index = 2
+    while candidate in existing:
+        candidate = f"{base}-{index}"
+        index += 1
+    return candidate
+
+
+def resolve_mcp_servers(config: dict[str, Any]) -> dict[str, dict[str, Any]]:
+    resolved: dict[str, dict[str, Any]] = {}
+
+    def add_server(
+        server_name: str,
+        server: dict[str, Any],
+        *,
+        source_prefix: str = "",
+        extra_env: dict[str, Any] | None = None,
+    ) -> None:
+        if not server or not bool(server.get("enabled", True)):
+            return
+        resolved_name = _dedupe_mcp_server_name(resolved, server_name, source_prefix=source_prefix)
+        payload = dict(server)
+        merged_env = dict(extra_env or {})
+        merged_env.update(payload.get("env") if isinstance(payload.get("env"), dict) else {})
+        if merged_env:
+            payload["env"] = merged_env
+        payload.pop("name", None)
+        payload.pop("source", None)
+        payload.pop("plugin", None)
+        payload.pop("enabled", None)
+        payload.pop("metadata", None)
+        payload.pop("tags", None)
+        payload.pop("version", None)
+        if payload.get("args") == []:
+            payload.pop("args", None)
+        if payload.get("env") == {}:
+            payload.pop("env", None)
+        if payload.get("cwd") == "":
+            payload.pop("cwd", None)
+        if payload.get("description") == "":
+            payload.pop("description", None)
+        if payload.get("command") == "":
+            payload.pop("command", None)
+        if payload.get("url") == "":
+            payload.pop("url", None)
+        resolved[resolved_name] = payload
+
+    # The packaged Limbi MCP server is always available.
+    add_server(
+        "limbi",
+        {
+            "type": "stdio",
+            "command": sys.executable,
+            "args": ["-m", "limbi.mcp_server"],
+            "description": "Limbi agent and orchestration server",
+            "enabled": True,
+            "source": "packaged",
+        },
+    )
+
+    for name, server in sorted(get_custom_mcp_servers(config).items()):
+        add_server(name, server, source_prefix="")
+
+    for plugin_name, plugin in sorted(get_custom_mcp_plugins(config).items()):
+        if not plugin.get("enabled", True):
+            continue
+        plugin_servers = plugin.get("servers", {})
+        if not isinstance(plugin_servers, dict):
+            continue
+        for server_name, server in sorted(plugin_servers.items()):
+            add_server(
+                server_name,
+                server,
+                source_prefix=plugin_name,
+                extra_env=plugin.get("env") if isinstance(plugin.get("env"), dict) else {},
+            )
+
+    return resolved
+
+
+def build_mcp_config(config: dict[str, Any]) -> dict[str, Any]:
+    return {"servers": resolve_mcp_servers(config)}

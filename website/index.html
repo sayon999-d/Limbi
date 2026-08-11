@@ -1204,7 +1204,7 @@
     <main>
       <section class="hero">
         <div>
-          <div class="eyebrow">Latest release 1.8.2</div>
+          <div class="eyebrow">Latest release 1.9.6</div>
           <h1>Omni-agent orchestration for local and cloud work</h1>
           <p class="lede">
             Limbi runs many specialized AI agents from one command, one Python API, or one
@@ -1591,6 +1591,14 @@
               packs, and let them inherit or pin a provider.
             </p>
           </div>
+          <div class="card">
+            <div class="card-tag">MCP</div>
+            <h3 class="card-title">Custom MCP servers and plugins</h3>
+            <p class="card-copy">
+              Add workspace-defined MCP servers and plugin bundles, then generate a merged
+              `.vscode/mcp.json` so VS Code and other MCP clients can use them.
+            </p>
+          </div>
         </div>
       </section>
 
@@ -1693,6 +1701,16 @@
             </p>
           </div>
           <div class="card">
+            <div class="card-tag">Python deps</div>
+            <h3 class="card-title">ModuleNotFoundError: langchain_core</h3>
+            <p class="card-copy">
+              Your install is usually stale or missing runtime packages. Run
+              <span style="font-family: var(--font-mono); color: var(--green);">brew upgrade limbi</span>
+              first. If that does not help, reinstall the formula or repair the venv with
+              <span style="font-family: var(--font-mono); color: var(--green);">python -m pip install -r requirements.txt</span>.
+            </p>
+          </div>
+          <div class="card">
             <div class="card-tag">Local models</div>
             <h3 class="card-title">Provider asks for a key on localhost</h3>
             <p class="card-copy">
@@ -1741,7 +1759,7 @@
 
       <div class="fineprint">
         <span>Built for a clean white glass deployment with modern motion and no decorative icons.</span>
-        <span>Limbi version 1.8.2</span>
+        <span>Limbi version 1.9.6</span>
       </div>
     </main>
   </div>

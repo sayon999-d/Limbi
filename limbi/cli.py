@@ -14,6 +14,7 @@ from typing import Any, Callable
 
 import click
 from limbi.llm_provider import list_available_models, normalize_provider_model, provider_requires_api_key
+from limbi.llm_provider import provider_dependency_hint
 
 
 _PROVIDER_CHOICES = {
@@ -227,7 +228,7 @@ def _print_banner(console):
 
     title = Text()
     title.append("LIMBI", style="bold bright_green")
-    title.append(" v1.8.2", style="bold white")
+    title.append(" v1.9.6", style="bold white")
     title.append(" - Omni-Agent Orchestrator", style="white")
 
     help_line = Text()
@@ -235,6 +236,8 @@ def _print_banner(console):
     help_line.append("/models", style="bold bright_green")
     help_line.append(", ", style="white")
     help_line.append("/skills", style="bold bright_green")
+    help_line.append(", ", style="white")
+    help_line.append("/mcp", style="bold bright_green")
     help_line.append(", ", style="white")
     help_line.append("/agent", style="bold bright_green")
     help_line.append(", or ", style="white")
@@ -983,6 +986,23 @@ def _normalize_custom_skill_name(name: str) -> str:
     return str(name or "").strip().lower().replace(" ", "-")
 
 
+def _normalize_custom_mcp_name(name: str) -> str:
+    return str(name or "").strip().lower().replace(" ", "-")
+
+
+def _parse_json_object(raw: str, *, label: str) -> dict[str, Any]:
+    text = str(raw or "").strip()
+    if not text:
+        return {}
+    try:
+        payload = json.loads(text)
+    except json.JSONDecodeError as exc:
+        raise click.ClickException(f"Invalid JSON for {label}: {exc}") from exc
+    if not isinstance(payload, dict):
+        raise click.ClickException(f"{label} must be a JSON object.")
+    return payload
+
+
 def _custom_skill_runtime_summary(skill: dict[str, Any], state: dict[str, Any]) -> str:
     provider = str(skill.get("provider") or "").strip()
     model = str(skill.get("model") or "").strip()
@@ -999,6 +1019,483 @@ def _custom_skill_runtime_summary(skill: dict[str, Any], state: dict[str, Any]) 
     elif not skill.get("provider"):
         summary += " (inherits current runtime)"
     return summary
+
+
+def _custom_mcp_runtime_summary(server: dict[str, Any]) -> str:
+    server_type = str(server.get("type") or "stdio").strip().lower()
+    command = str(server.get("command") or "").strip()
+    url = str(server.get("url") or "").strip()
+    args = server.get("args") if isinstance(server.get("args"), list) else []
+    enabled = "enabled" if server.get("enabled", True) else "disabled"
+    if server_type == "stdio":
+        runtime = command or "(no command)"
+        if args:
+            runtime += " " + " ".join(str(item) for item in args if str(item).strip())
+    else:
+        runtime = url or command or "(no url)"
+    plugin = str(server.get("plugin") or "").strip()
+    if plugin:
+        runtime += f" | plugin: {plugin}"
+    return f"{server_type} | {enabled} | {runtime}"
+
+
+def _print_custom_mcp_servers(console, state: dict[str, Any]) -> None:
+    from rich.table import Table
+    from limbi.workspace import get_custom_mcp_servers
+
+    servers = get_custom_mcp_servers(state["ws_config"])
+    table = Table(
+        title="Custom MCP Servers",
+        border_style="bright_green",
+        show_lines=False,
+        padding=(0, 1),
+    )
+    table.add_column("Server", style="bold white", min_width=18)
+    table.add_column("Description", style="white", min_width=28)
+    table.add_column("Runtime", style="dim", min_width=42)
+
+    if not servers:
+        table.add_row("(none)", "No custom MCP servers have been saved yet.", "Use /mcp to add one.")
+        console.print(table)
+        return
+
+    for name, server in sorted(servers.items()):
+        table.add_row(
+            name,
+            str(server.get("description") or "").strip() or "(no description)",
+            _custom_mcp_runtime_summary(server),
+        )
+    console.print(table)
+
+
+def _print_custom_mcp_plugins(console, state: dict[str, Any]) -> None:
+    from rich.table import Table
+    from limbi.workspace import get_custom_mcp_plugins
+
+    plugins = get_custom_mcp_plugins(state["ws_config"])
+    table = Table(
+        title="Custom MCP Plugins",
+        border_style="bright_green",
+        show_lines=False,
+        padding=(0, 1),
+    )
+    table.add_column("Plugin", style="bold white", min_width=18)
+    table.add_column("Description", style="white", min_width=28)
+    table.add_column("Servers", style="dim", min_width=12)
+    table.add_column("Status", style="dim", min_width=14)
+
+    if not plugins:
+        table.add_row("(none)", "No custom MCP plugins have been saved yet.", "0", "Use /mcp to add one.")
+        console.print(table)
+        return
+
+    for name, plugin in sorted(plugins.items()):
+        servers = plugin.get("servers", {})
+        server_count = len(servers) if isinstance(servers, dict) else 0
+        status = "enabled" if plugin.get("enabled", True) else "disabled"
+        table.add_row(
+            name,
+            str(plugin.get("description") or "").strip() or "(no description)",
+            str(server_count),
+            status,
+        )
+    console.print(table)
+
+
+def _choose_mcp_server_type(console, existing: dict[str, Any] | None = None) -> str:
+    choices = [
+        {"name": "stdio", "label": "stdio", "details": "launch a local process command"},
+        {"name": "sse", "label": "sse", "details": "connect to a remote SSE endpoint"},
+        {"name": "http", "label": "http", "details": "connect to a remote HTTP endpoint"},
+    ]
+    default = str((existing or {}).get("type") or "stdio").strip().lower()
+    default_index = 0
+    for idx, item in enumerate(choices):
+        if item["name"] == default:
+            default_index = idx
+            break
+    selected = _select_from_menu(
+        console,
+        "Choose MCP server type",
+        choices,
+        default_index=default_index,
+        help_text="Use Up/Down to move, then Enter to choose.",
+    )
+    return selected["name"]
+
+
+def _collect_mcp_server_payload(state: dict[str, Any], console, existing: dict[str, Any] | None = None) -> dict[str, Any]:
+    existing = existing or {}
+    description = click.prompt(
+        "Description",
+        default=str(existing.get("description") or ""),
+        show_default=bool(existing.get("description")),
+        type=str,
+    ).strip()
+    server_type = _choose_mcp_server_type(console, existing=existing)
+    enabled = click.confirm(
+        "Enable this server?",
+        default=bool(existing.get("enabled", True)),
+    )
+    payload: dict[str, Any] = {
+        "description": description,
+        "type": server_type,
+        "enabled": enabled,
+    }
+
+    if server_type == "stdio":
+        payload["command"] = click.prompt(
+            "Command",
+            default=str(existing.get("command") or ""),
+            show_default=bool(existing.get("command")),
+            type=str,
+        ).strip()
+        args_raw = click.prompt(
+            "Arguments as JSON array",
+            default=json.dumps(existing.get("args") or []),
+            show_default=True,
+            type=str,
+        )
+        payload["args"] = json.loads(args_raw)
+        if not isinstance(payload["args"], list):
+            raise click.ClickException("Arguments must be a JSON array.")
+    else:
+        payload["url"] = click.prompt(
+            "URL",
+            default=str(existing.get("url") or ""),
+            show_default=bool(existing.get("url")),
+            type=str,
+        ).strip()
+
+    env_raw = click.prompt(
+        "Environment variables as JSON object",
+        default=json.dumps(existing.get("env") or {}),
+        show_default=True,
+        type=str,
+    )
+    payload["env"] = _parse_json_object(env_raw, label="environment variables")
+    payload["cwd"] = click.prompt(
+        "Working directory",
+        default=str(existing.get("cwd") or ""),
+        show_default=bool(existing.get("cwd")),
+        type=str,
+    ).strip()
+    return payload
+
+
+def _save_custom_mcp_server(
+    state: dict[str, Any],
+    console,
+    name: str,
+    *,
+    existing_server: dict[str, Any] | None = None,
+) -> None:
+    from limbi.workspace import get_custom_mcp_server, save_config, set_custom_mcp_server
+    from rich.panel import Panel
+
+    ws_config = dict(state["ws_config"])
+    existing = existing_server or get_custom_mcp_server(ws_config, name)
+    server_key = _normalize_custom_mcp_name(name)
+    if not server_key:
+        raise click.ClickException("Server name is required.")
+
+    payload = _collect_mcp_server_payload(state, console, existing=existing)
+    ws_config = set_custom_mcp_server(ws_config, server_key, payload)
+    save_config(ws_config)
+    state["ws_config"] = ws_config
+    saved = get_custom_mcp_server(ws_config, server_key)
+    console.print(
+        Panel(
+            f"[green]Saved custom MCP server:[/] [bold]{saved.get('name', server_key)}[/]\n"
+            f"[dim]Runtime:[/] {_custom_mcp_runtime_summary(saved)}",
+            border_style="bright_green",
+            title="MCP Server Saved",
+            padding=(1, 2),
+        )
+    )
+
+
+def _delete_custom_mcp_server(state: dict[str, Any], console, server_name: str) -> None:
+    from limbi.workspace import delete_custom_mcp_server, get_custom_mcp_servers, save_config
+
+    server_key = _normalize_custom_mcp_name(server_name)
+    ws_config = dict(state["ws_config"])
+    servers = get_custom_mcp_servers(ws_config)
+    if server_key not in servers:
+        console.print(f"[yellow]No saved custom MCP server named '{server_key}'.[/]")
+        return
+    if not click.confirm(f"Delete custom MCP server '{server_key}'?", default=False):
+        return
+    ws_config = delete_custom_mcp_server(ws_config, server_key)
+    save_config(ws_config)
+    state["ws_config"] = ws_config
+    console.print(f"[green]Deleted custom MCP server:[/] [bold]{server_key}[/]")
+
+
+def _manage_custom_mcp_servers(state: dict[str, Any], console) -> None:
+    from limbi.workspace import get_custom_mcp_server, get_custom_mcp_servers
+
+    while True:
+        _print_custom_mcp_servers(console, state)
+        actions = [
+            {"name": "create", "label": "Create server", "details": "define a new MCP server"},
+            {"name": "update", "label": "Update server", "details": "edit an existing MCP server"},
+            {"name": "delete", "label": "Delete server", "details": "remove a saved MCP server"},
+            {"name": "back", "label": "Back", "details": "return to the terminal"},
+        ]
+        action_item = _select_from_menu(
+            console,
+            "Custom MCP servers",
+            actions,
+            help_text="Use Up/Down to move, then Enter to choose.",
+        )
+        action = action_item["name"]
+        if action == "back":
+            return
+
+        ws_config = dict(state["ws_config"])
+        servers = get_custom_mcp_servers(ws_config)
+
+        if action == "delete":
+            if not servers:
+                console.print("[dim]No custom MCP servers to delete.[/]")
+                continue
+            delete_item = _select_from_menu(
+                console,
+                "Delete which server?",
+                [
+                    {"name": name, "label": name, "details": str(server.get("description") or "").strip() or "(no description)"}
+                    for name, server in sorted(servers.items())
+                ],
+                help_text="Use Up/Down to move, then Enter to choose.",
+            )
+            _delete_custom_mcp_server(state, console, delete_item["name"])
+            if not click.confirm("Manage another custom MCP server?", default=False):
+                return
+            continue
+
+        if action == "update":
+            if not servers:
+                console.print("[dim]No custom MCP servers to update yet.[/]")
+                continue
+            selected_server = _select_from_menu(
+                console,
+                "Update which server?",
+                [
+                    {"name": name, "label": name, "details": str(server.get("description") or "").strip() or "(no description)"}
+                    for name, server in sorted(servers.items())
+                ],
+                help_text="Use Up/Down to move, then Enter to choose.",
+            )
+            name = selected_server["name"]
+            existing_server = get_custom_mcp_server(ws_config, name)
+        else:
+            name = click.prompt(
+                "Server name (used in mcp.json)",
+                default="",
+                show_default=False,
+                type=str,
+            ).strip()
+            if not name:
+                raise click.ClickException("Server name is required.")
+            existing_server = get_custom_mcp_server(ws_config, name)
+
+        _save_custom_mcp_server(state, console, name, existing_server=existing_server)
+        if not click.confirm("Manage another custom MCP server?", default=False):
+            return
+
+
+def _save_custom_mcp_plugin(
+    state: dict[str, Any],
+    console,
+    name: str,
+    *,
+    existing_plugin: dict[str, Any] | None = None,
+) -> None:
+    from limbi.workspace import get_custom_mcp_plugin, save_config, set_custom_mcp_plugin
+    from rich.panel import Panel
+
+    ws_config = dict(state["ws_config"])
+    existing = existing_plugin or get_custom_mcp_plugin(ws_config, name)
+    plugin_key = _normalize_custom_mcp_name(name)
+    if not plugin_key:
+        raise click.ClickException("Plugin name is required.")
+
+    description = click.prompt(
+        "Description",
+        default=str(existing.get("description") or ""),
+        show_default=bool(existing.get("description")),
+        type=str,
+    ).strip()
+    version = click.prompt(
+        "Version",
+        default=str(existing.get("version") or "1.0.0"),
+        show_default=True,
+        type=str,
+    ).strip()
+    enabled = click.confirm(
+        "Enable this plugin?",
+        default=bool(existing.get("enabled", True)),
+    )
+    servers_raw = click.prompt(
+        "Plugin MCP servers as JSON object",
+        default=json.dumps(existing.get("servers") or {}, indent=2),
+        show_default=True,
+        type=str,
+    )
+    servers = _parse_json_object(servers_raw, label="plugin servers")
+
+    env_raw = click.prompt(
+        "Plugin environment variables as JSON object",
+        default=json.dumps(existing.get("env") or {}),
+        show_default=True,
+        type=str,
+    )
+    env = _parse_json_object(env_raw, label="plugin environment variables")
+
+    ws_config = set_custom_mcp_plugin(
+        ws_config,
+        plugin_key,
+        {
+            "description": description,
+            "version": version,
+            "enabled": enabled,
+            "servers": servers,
+            "env": env,
+        },
+    )
+    save_config(ws_config)
+    state["ws_config"] = ws_config
+    saved = get_custom_mcp_plugin(ws_config, plugin_key)
+    console.print(
+        Panel(
+            f"[green]Saved custom MCP plugin:[/] [bold]{saved.get('name', plugin_key)}[/]\n"
+            f"[dim]Servers:[/] {len(saved.get('servers', {}) or {})}\n"
+            f"[dim]Status:[/] {'enabled' if saved.get('enabled', True) else 'disabled'}",
+            border_style="bright_green",
+            title="MCP Plugin Saved",
+            padding=(1, 2),
+        )
+    )
+
+
+def _delete_custom_mcp_plugin(state: dict[str, Any], console, plugin_name: str) -> None:
+    from limbi.workspace import delete_custom_mcp_plugin, get_custom_mcp_plugins, save_config
+
+    plugin_key = _normalize_custom_mcp_name(plugin_name)
+    ws_config = dict(state["ws_config"])
+    plugins = get_custom_mcp_plugins(ws_config)
+    if plugin_key not in plugins:
+        console.print(f"[yellow]No saved custom MCP plugin named '{plugin_key}'.[/]")
+        return
+    if not click.confirm(f"Delete custom MCP plugin '{plugin_key}'?", default=False):
+        return
+    ws_config = delete_custom_mcp_plugin(ws_config, plugin_key)
+    save_config(ws_config)
+    state["ws_config"] = ws_config
+    console.print(f"[green]Deleted custom MCP plugin:[/] [bold]{plugin_key}[/]")
+
+
+def _manage_custom_mcp_plugins(state: dict[str, Any], console) -> None:
+    from limbi.workspace import get_custom_mcp_plugin, get_custom_mcp_plugins
+
+    while True:
+        _print_custom_mcp_plugins(console, state)
+        actions = [
+            {"name": "create", "label": "Create plugin", "details": "define a plugin that bundles MCP servers"},
+            {"name": "update", "label": "Update plugin", "details": "edit an existing plugin"},
+            {"name": "delete", "label": "Delete plugin", "details": "remove a saved plugin"},
+            {"name": "back", "label": "Back", "details": "return to the terminal"},
+        ]
+        action_item = _select_from_menu(
+            console,
+            "Custom MCP plugins",
+            actions,
+            help_text="Use Up/Down to move, then Enter to choose.",
+        )
+        action = action_item["name"]
+        if action == "back":
+            return
+
+        ws_config = dict(state["ws_config"])
+        plugins = get_custom_mcp_plugins(ws_config)
+
+        if action == "delete":
+            if not plugins:
+                console.print("[dim]No custom MCP plugins to delete.[/]")
+                continue
+            delete_item = _select_from_menu(
+                console,
+                "Delete which plugin?",
+                [
+                    {"name": name, "label": name, "details": str(plugin.get("description") or "").strip() or "(no description)"}
+                    for name, plugin in sorted(plugins.items())
+                ],
+                help_text="Use Up/Down to move, then Enter to choose.",
+            )
+            _delete_custom_mcp_plugin(state, console, delete_item["name"])
+            if not click.confirm("Manage another custom MCP plugin?", default=False):
+                return
+            continue
+
+        if action == "update":
+            if not plugins:
+                console.print("[dim]No custom MCP plugins to update yet.[/]")
+                continue
+            selected_plugin = _select_from_menu(
+                console,
+                "Update which plugin?",
+                [
+                    {"name": name, "label": name, "details": str(plugin.get("description") or "").strip() or "(no description)"}
+                    for name, plugin in sorted(plugins.items())
+                ],
+                help_text="Use Up/Down to move, then Enter to choose.",
+            )
+            name = selected_plugin["name"]
+            existing_plugin = get_custom_mcp_plugin(ws_config, name)
+        else:
+            name = click.prompt(
+                "Plugin name (used in mcp.json)",
+                default="",
+                show_default=False,
+                type=str,
+            ).strip()
+            if not name:
+                raise click.ClickException("Plugin name is required.")
+            existing_plugin = get_custom_mcp_plugin(ws_config, name)
+
+        _save_custom_mcp_plugin(state, console, name, existing_plugin=existing_plugin)
+        if not click.confirm("Manage another custom MCP plugin?", default=False):
+            return
+
+
+def _manage_mcp_workspace(state: dict[str, Any], console) -> None:
+    while True:
+        actions = [
+            {"name": "servers", "label": "Custom servers", "details": "add, update, or remove MCP servers"},
+            {"name": "plugins", "label": "Plugins", "details": "bundle one or more MCP servers together"},
+            {"name": "generate", "label": "Generate config", "details": "write the merged .vscode/mcp.json"},
+            {"name": "back", "label": "Back", "details": "return to the terminal"},
+        ]
+        action_item = _select_from_menu(
+            console,
+            "Custom MCP workspace",
+            actions,
+            help_text="Use Up/Down to move, then Enter to choose.",
+        )
+        action = action_item["name"]
+        if action == "back":
+            return
+        if action == "servers":
+            _manage_custom_mcp_servers(state, console)
+            continue
+        if action == "plugins":
+            _manage_custom_mcp_plugins(state, console)
+            continue
+        if action == "generate":
+            config_path = _generate_mcp_config()
+            console.print(f"[green]MCP config written:[/] [bold]{config_path}[/]")
+            continue
 
 
 def _print_custom_skills(console, state: dict[str, Any]) -> None:
@@ -1632,20 +2129,15 @@ def _run_manual_agent(state: dict[str, Any], console) -> None:
 
 
 def _generate_mcp_config(config_path: str | None = None) -> Path:
+    from limbi.workspace import build_mcp_config, init_workspace, load_config
+
+    init_workspace()
     path = Path(config_path or ".vscode/mcp.json").expanduser()
     if not path.is_absolute():
         path = Path.cwd() / path
     path.parent.mkdir(parents=True, exist_ok=True)
 
-    config = {
-        "servers": {
-            "limbi": {
-                "type": "stdio",
-                "command": sys.executable,
-                "args": ["-m", "limbi.mcp_server"],
-            }
-        }
-    }
+    config = build_mcp_config(load_config())
     path.write_text(json.dumps(config, indent=2) + "\n", encoding="utf-8")
     return path
 
@@ -1770,6 +2262,21 @@ async def _send_message(state, message: str, console) -> None:
                 console.print("\n[yellow]Cancelled.[/] Returning to the prompt.\n")
                 return
             result = await chat_task
+        except ModuleNotFoundError as exc:
+            missing = getattr(exc, "name", "") or ""
+            package_name, extra_name = provider_dependency_hint(str(state.get("provider") or ""))
+            if package_name and missing in {package_name.replace("-", "_"), package_name}:
+                install_lines = [f"python -m pip install '{package_name}'"]
+                if extra_name:
+                    install_lines.append(f"python -m pip install \"{extra_name}\"")
+                console.print(
+                    f"\n[red]Limbi is missing a provider package for '{state.get('provider') or 'unknown'}'.[/]\n"
+                    f"Install it with [bold]{install_lines[0]}[/]"
+                    + (f" or [bold]{install_lines[1]}[/]." if len(install_lines) > 1 else ".")
+                    + ("\nIf you are on a stale Brew install, run [bold]brew upgrade limbi[/]." if extra_name else "")
+                )
+                return
+            raise
         except KeyboardInterrupt:
             console.print("\n[yellow]Cancelled.[/] Returning to the prompt.\n")
             return
@@ -1935,6 +2442,49 @@ def _repl(state, console):
                 else:
                     _manage_custom_skills(state, console)
                 continue
+            if cmd in ("/mcp",):
+                subcommand = parts[1].lower() if len(parts) > 1 else ""
+                if subcommand in {"list", "show"}:
+                    _print_custom_mcp_servers(console, state)
+                    _print_custom_mcp_plugins(console, state)
+                elif subcommand in {"servers", "server"}:
+                    if len(parts) > 2 and parts[2].lower() in {"delete", "remove"} and len(parts) > 3:
+                        _delete_custom_mcp_server(state, console, parts[3])
+                    elif len(parts) > 2 and parts[2].lower() in {"update", "edit"} and len(parts) > 3:
+                        from limbi.workspace import get_custom_mcp_server
+
+                        server_name = parts[3]
+                        server = get_custom_mcp_server(state["ws_config"], server_name)
+                        if not server:
+                            console.print(f"[yellow]No saved custom MCP server named '{_normalize_custom_mcp_name(server_name)}'.[/]")
+                        else:
+                            _save_custom_mcp_server(state, console, server_name, existing_server=server)
+                    elif len(parts) > 2 and parts[2].lower() == "add":
+                        _manage_custom_mcp_servers(state, console)
+                    else:
+                        _manage_custom_mcp_servers(state, console)
+                elif subcommand in {"plugins", "plugin"}:
+                    if len(parts) > 2 and parts[2].lower() in {"delete", "remove"} and len(parts) > 3:
+                        _delete_custom_mcp_plugin(state, console, parts[3])
+                    elif len(parts) > 2 and parts[2].lower() in {"update", "edit"} and len(parts) > 3:
+                        from limbi.workspace import get_custom_mcp_plugin
+
+                        plugin_name = parts[3]
+                        plugin = get_custom_mcp_plugin(state["ws_config"], plugin_name)
+                        if not plugin:
+                            console.print(f"[yellow]No saved custom MCP plugin named '{_normalize_custom_mcp_name(plugin_name)}'.[/]")
+                        else:
+                            _save_custom_mcp_plugin(state, console, plugin_name, existing_plugin=plugin)
+                    elif len(parts) > 2 and parts[2].lower() == "add":
+                        _manage_custom_mcp_plugins(state, console)
+                    else:
+                        _manage_custom_mcp_plugins(state, console)
+                elif subcommand in {"generate", "export"}:
+                    config_path = _generate_mcp_config(parts[2] if len(parts) > 2 else None)
+                    console.print(f"[green]MCP config written:[/] [bold]{config_path}[/]")
+                else:
+                    _manage_mcp_workspace(state, console)
+                continue
             if cmd in ("/skill",):
                 if len(parts) < 2:
                     console.print("[yellow]Use /skill <name> [task][/]")
@@ -2019,6 +2569,7 @@ def _repl(state, console):
 | `/models` | Choose provider and model for the current session |
 | `/keys` | Manage saved API keys for providers |
 | `/skills` | Open the custom skill manager |
+| `/mcp` | Open the custom MCP server and plugin manager |
 | `/skill` | Run a saved custom skill with a task |
 | `/agents` | Manually choose an agent and run one action |
 | `/agent` | Alias for `/agents` |
@@ -2108,7 +2659,7 @@ Type a natural-language prompt to talk to Limbi.
     default=False,
     help="Skip workspace trust prompt (for CI/automation).",
 )
-@click.version_option(version="1.8.2", prog_name="limbi")
+@click.version_option(version="1.9.6", prog_name="limbi")
 def main(
     prompt: str | None,
     provider: str | None,

@@ -14,7 +14,7 @@
 
 Limbi is an omni-agent orchestration platform for running many specialized AI agents from one command, one Python API, or one MCP-compatible editor workflow.
 
-Current package version: `1.8.2`
+Current package version: `1.9.6`
 
 
 ## Quick Install
@@ -56,6 +56,55 @@ brew uninstall limbi
 brew untap sayon999-d/limbi
 brew tap sayon999-d/limbi https://github.com/sayon999-d/Limbi-.git
 brew install limbi
+```
+
+### Missing Dependency Fix
+
+If `limbi` crashes with:
+
+```text
+ModuleNotFoundError: No module named 'langchain_core'
+```
+
+your install is usually stale or missing the Python dependencies that Limbi needs. Fix it by
+refreshing the package and reinstalling its requirements:
+
+```bash
+brew upgrade limbi
+```
+
+If that still fails, reinstall the formula:
+
+```bash
+brew uninstall limbi
+brew untap sayon999-d/limbi
+brew tap sayon999-d/limbi https://github.com/sayon999-d/Limbi-.git
+brew install limbi
+```
+
+For a pip or local virtualenv install, run:
+
+```bash
+python -m pip install -r requirements.txt
+```
+
+If you are using the Homebrew venv directly and need a fast repair, install the missing
+dependencies into that environment with:
+
+```bash
+"$(brew --prefix limbi)/libexec/bin/python" -m pip install -r Limbi/requirements.txt
+```
+
+If the traceback instead mentions `langchain_openai`, install the OpenAI provider extra:
+
+```bash
+python -m pip install "limbi[openai]"
+```
+
+Homebrew users should refresh to a formula that bundles `langchain-openai`:
+
+```bash
+brew upgrade limbi
 ```
 
 ## Recent Updates
@@ -838,6 +887,17 @@ python -m limbi.mcp_server
 
 Do not expect `python -m limbi.mcp_server` to answer like a chat command. It is a stdio server and waits for an MCP client to send JSON-RPC input.
 
+Limbi can also merge workspace-defined custom MCP servers and plugins into the generated
+config. Use the interactive manager to add them:
+
+```text
+/mcp
+```
+
+From there you can create, update, delete, and generate a merged `.vscode/mcp.json`.
+Custom plugin entries can bundle multiple MCP servers and optional shared environment
+variables.
+
 ## CLI Commands
 
 Use the safe module form:
@@ -866,6 +926,7 @@ The on-screen command list is intentionally short:
 | `/models` | Choose provider and model for the current session |
 | `/keys`   | Manage saved API keys for providers               |
 | `/skills` | Open the custom skill manager                     |
+| `/mcp`    | Open the custom MCP server and plugin manager     |
 | `/skill`  | Run a saved custom skill with a task              |
 | `/agents` | Manually choose an agent and run one action       |
 | `/agent`  | Alias for `/agents`                             |

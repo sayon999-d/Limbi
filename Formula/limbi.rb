@@ -3,8 +3,8 @@ class Limbi < Formula
 
   desc "Omni-Agent orchestration platform for local and cloud LLM workflows"
   homepage "https://github.com/sayon999-d/Limbi-"
-  url "https://files.pythonhosted.org/packages/source/l/limbi/limbi-1.8.2.tar.gz"
-  sha256 "de207a22dc39a95243753a634154b3dcf75d2566578885dea454fa968b5d0e28"
+  url "https://files.pythonhosted.org/packages/source/l/limbi/limbi-1.9.6.tar.gz"
+  sha256 "5fb8cd45d413179fba23b1bf667d2d53f782d6ecf2fe6fe9e81d683d84d81496"
   license "Apache-2.0"
 
   depends_on "python@3.11"
@@ -20,6 +20,11 @@ class Limbi < Formula
   resource "langchain-ollama" do
     url "https://files.pythonhosted.org/packages/2c/b2/c2acb076590a98bee2816ed5f285e00df162a34238f9e276e175e14ebc35/langchain_ollama-1.1.0-py3-none-any.whl"
     sha256 "43ac83a6eacb0f43855810739794dd55019e0d9b17bdcf3ecb3b1991ac3b59dd"
+  end
+
+  resource "langchain-openai" do
+    url "https://files.pythonhosted.org/packages/2f/4b/7520114de1ce36bb17cbc98d0fcda048a9f755bedaeb73b92137aeaaf1db/langchain_openai-1.3.3-py3-none-any.whl"
+    sha256 "e469659862c8aabba4f6653df973206e7be54f98cf2275c86be7f06b7abe20d7"
   end
 
   resource "langchain-protocol" do

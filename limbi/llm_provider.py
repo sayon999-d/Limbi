@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import importlib
 import json
 import logging
 import os
@@ -40,6 +41,63 @@ _PROVIDER_MODEL_ALIASES = {
         "deepseek-r1-distill-llama-70b": "llama-3.3-70b-versatile",
     },
 }
+
+_OPTIONAL_DEPENDENCIES = {
+    "langchain_ollama": ("langchain-ollama", "limbi[ollama]"),
+    "langchain_openai": ("langchain-openai", "limbi[openai]"),
+    "langchain_anthropic": ("langchain-anthropic", "limbi[anthropic]"),
+    "langchain_google_genai": ("langchain-google-genai", "limbi[google]"),
+    "langchain_groq": ("langchain-groq", "limbi[groq]"),
+    "langchain_mistralai": ("langchain-mistralai", "limbi[mistral]"),
+    "langchain_cohere": ("langchain-cohere", "limbi[cohere]"),
+}
+
+_PROVIDER_DEPENDENCY_HINTS = {
+    "ollama": ("langchain_ollama", "langchain-ollama"),
+    "ollama_cloud": ("langchain_openai", "langchain-openai"),
+    "openai": ("langchain_openai", "langchain-openai"),
+    "anthropic": ("langchain_anthropic", "langchain-anthropic"),
+    "claude": ("langchain_anthropic", "langchain-anthropic"),
+    "google": ("langchain_google_genai", "langchain-google-genai"),
+    "gemini": ("langchain_google_genai", "langchain-google-genai"),
+    "groq": ("langchain_groq", "langchain-groq"),
+    "openrouter": ("langchain_openai", "langchain-openai"),
+    "huggingface": ("langchain_openai", "langchain-openai"),
+    "hf": ("langchain_openai", "langchain-openai"),
+    "chutes": ("langchain_openai", "langchain-openai"),
+    "bytez": ("langchain_openai", "langchain-openai"),
+    "together": ("langchain_openai", "langchain-openai"),
+    "mistral": ("langchain_mistralai", "langchain-mistralai"),
+    "azure": ("langchain_openai", "langchain-openai"),
+    "azure_openai": ("langchain_openai", "langchain-openai"),
+    "cohere": ("langchain_cohere", "langchain-cohere"),
+    "openai_compatible": ("langchain_openai", "langchain-openai"),
+    "lmstudio": ("langchain_openai", "langchain-openai"),
+    "vllm": ("langchain_openai", "langchain-openai"),
+    "localai": ("langchain_openai", "langchain-openai"),
+    "koboldcpp": ("langchain_openai", "langchain-openai"),
+    "llamacpp": ("langchain_openai", "langchain-openai"),
+}
+
+
+def _require_optional_dependency(module_name: str, package_name: str) -> Any:
+    try:
+        return importlib.import_module(module_name)
+    except ModuleNotFoundError as exc:
+        if exc.name != module_name:
+            raise
+        pip_package, limbi_extra = _OPTIONAL_DEPENDENCIES.get(module_name, (package_name, ""))
+        hint = f"Install it with `python -m pip install '{pip_package}'`"
+        if limbi_extra:
+            hint += f" or `python -m pip install \"{limbi_extra}\"`"
+        raise ModuleNotFoundError(
+            f"Missing optional dependency '{pip_package}'. {hint}."
+        ) from exc
+
+
+def provider_dependency_hint(provider_name: str) -> tuple[str, str]:
+    provider = (provider_name or "").strip().lower()
+    return _PROVIDER_DEPENDENCY_HINTS.get(provider, ("", ""))
 
 
 def normalize_provider_model(provider_name: str, model: str | None = None) -> str:
@@ -142,7 +200,7 @@ class OllamaCloudProvider(BaseLLMProvider):
         return "ollama_cloud"
 
     def get_chat_model(self) -> BaseChatModel:
-        from langchain_openai import ChatOpenAI
+        ChatOpenAI = _require_optional_dependency("langchain_openai", "langchain-openai").ChatOpenAI
         return ChatOpenAI(
             model=self.config.model or "gpt-oss:120b-cloud",
             api_key=self.config.api_key,
@@ -157,7 +215,7 @@ class OpenAIProvider(BaseLLMProvider):
         return "openai"
 
     def get_chat_model(self) -> BaseChatModel:
-        from langchain_openai import ChatOpenAI
+        ChatOpenAI = _require_optional_dependency("langchain_openai", "langchain-openai").ChatOpenAI
         kwargs: dict[str, Any] = {
             "model": self.config.model or "gpt-4o",
             "api_key": self.config.api_key,
@@ -216,7 +274,7 @@ class TogetherProvider(BaseLLMProvider):
         return "together"
 
     def get_chat_model(self) -> BaseChatModel:
-        from langchain_openai import ChatOpenAI
+        ChatOpenAI = _require_optional_dependency("langchain_openai", "langchain-openai").ChatOpenAI
         return ChatOpenAI(
             model=self.config.model or "meta-llama/Llama-3-70b-chat-hf",
             api_key=self.config.api_key,
@@ -245,7 +303,7 @@ class AzureOpenAIProvider(BaseLLMProvider):
         return "azure"
 
     def get_chat_model(self) -> BaseChatModel:
-        from langchain_openai import AzureChatOpenAI
+        AzureChatOpenAI = _require_optional_dependency("langchain_openai", "langchain-openai").AzureChatOpenAI
         return AzureChatOpenAI(
             azure_deployment=self.config.azure_deployment or self.config.model,
             api_key=self.config.api_key,
@@ -276,7 +334,7 @@ class OpenRouterProvider(BaseLLMProvider):
         return "openrouter"
 
     def get_chat_model(self) -> BaseChatModel:
-        from langchain_openai import ChatOpenAI
+        ChatOpenAI = _require_optional_dependency("langchain_openai", "langchain-openai").ChatOpenAI
         return ChatOpenAI(
             model=self.config.model or "openai/gpt-4o",
             api_key=self.config.api_key,
@@ -292,7 +350,7 @@ class HuggingFaceProvider(BaseLLMProvider):
         return "huggingface"
 
     def get_chat_model(self) -> BaseChatModel:
-        from langchain_openai import ChatOpenAI
+        ChatOpenAI = _require_optional_dependency("langchain_openai", "langchain-openai").ChatOpenAI
         return ChatOpenAI(
             model=self.config.model or "meta-llama/Llama-3.1-8B-Instruct",
             api_key=self.config.api_key,
@@ -308,7 +366,7 @@ class ChutesProvider(BaseLLMProvider):
         return "chutes"
 
     def get_chat_model(self) -> BaseChatModel:
-        from langchain_openai import ChatOpenAI
+        ChatOpenAI = _require_optional_dependency("langchain_openai", "langchain-openai").ChatOpenAI
         return ChatOpenAI(
             model=self.config.model or "meta-llama/Llama-3.1-8B-Instruct",
             api_key=self.config.api_key,
@@ -324,7 +382,7 @@ class BytezProvider(BaseLLMProvider):
         return "bytez"
 
     def get_chat_model(self) -> BaseChatModel:
-        from langchain_openai import ChatOpenAI
+        ChatOpenAI = _require_optional_dependency("langchain_openai", "langchain-openai").ChatOpenAI
         return ChatOpenAI(
             model=self.config.model or "meta-llama/Llama-3.1-8B-Instruct",
             api_key=self.config.api_key,
@@ -339,7 +397,7 @@ class OpenAICompatibleProvider(BaseLLMProvider):
         return "openai_compatible"
 
     def get_chat_model(self) -> BaseChatModel:
-        from langchain_openai import ChatOpenAI
+        ChatOpenAI = _require_optional_dependency("langchain_openai", "langchain-openai").ChatOpenAI
         return ChatOpenAI(
             model=self.config.model or "default",
             api_key=self.config.api_key or "not-needed",

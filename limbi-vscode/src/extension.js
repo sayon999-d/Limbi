@@ -61,17 +61,10 @@ function activate(context) {
 
             const configPath = path.join(vscodeDir, "mcp.json");
             const pythonCommand = await resolvePythonCommand(String(getConfig("pythonCommand") || "python"));
-            const config = {
-                servers: {
-                    limbi: {
-                        type: "stdio",
-                        command: pythonCommand,
-                        args: ["-m", "limbi.mcp_server"],
-                    },
-                },
-            };
-
-            fs.writeFileSync(configPath, `${JSON.stringify(config, null, 2)}\n`, "utf8");
+            childProcess.execFileSync(pythonCommand, ["-m", "limbi", "--generate-mcp-config", "--mcp-config-path", configPath], {
+                cwd: projectRoot,
+                stdio: "pipe",
+            });
             vscode.window.showInformationMessage(`Limbi MCP config written to ${configPath} using ${pythonCommand}`);
         })
     );
