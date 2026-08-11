@@ -23,7 +23,7 @@ Use whichever install path fits your setup:
 
 ```bash
 # Homebrew
-brew tap sayon999-d/limbi https://github.com/sayon999-d/Limbi-.git
+brew tap sayon999-d/limbi https://github.com/sayon999-d/Limbi.git
 brew install limbi
 
 # curl installer
@@ -54,7 +54,7 @@ If the tap itself is out of sync, you can reinstall the tap cleanly after removi
 ```bash
 brew uninstall limbi
 brew untap sayon999-d/limbi
-brew tap sayon999-d/limbi https://github.com/sayon999-d/Limbi-.git
+brew tap sayon999-d/limbi https://github.com/sayon999-d/Limbi.git
 brew install limbi
 ```
 
@@ -78,7 +78,7 @@ If that still fails, reinstall the formula:
 ```bash
 brew uninstall limbi
 brew untap sayon999-d/limbi
-brew tap sayon999-d/limbi https://github.com/sayon999-d/Limbi-.git
+brew tap sayon999-d/limbi https://github.com/sayon999-d/Limbi.git
 brew install limbi
 ```
 
@@ -1064,7 +1064,7 @@ Limbi now has two easy installation paths:
 Tap the repo and install Limbi through Homebrew:
 
 ```bash
-brew tap sayon999-d/limbi https://github.com/sayon999-d/Limbi-.git
+brew tap sayon999-d/limbi https://github.com/sayon999-d/Limbi.git
 brew install limbi
 ```
 
