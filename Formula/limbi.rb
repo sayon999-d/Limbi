@@ -53,8 +53,8 @@ class Limbi < Formula
   end
 
   resource "pyyaml" do
-    url "https://files.pythonhosted.org/packages/16/19/13de8e4377ed53079ee996e1ab0a9c33ec2faf808a4647b7b4c0d46dd239/pyyaml-6.0.3-cp311-cp311-macosx_11_0_arm64.whl"
-    sha256 "652cb6edd41e718550aad172851962662ff2681490a8a711af6a4d288dd96824"
+    url "https://files.pythonhosted.org/packages/source/P/PyYAML/pyyaml-6.0.3.tar.gz"
+    sha256 "d76623373421df22fb4cf8817020cbb7ef15c725b9d5e45f17e189bfc384190f"
   end
 
   resource "tenacity" do
