@@ -68,8 +68,8 @@ class Limbi < Formula
   end
 
   resource "uuid-utils" do
-    url "https://files.pythonhosted.org/packages/43/b7/add4363039a34506a58457d96d4aa2126061df3a143eb4d042aedd6a2e76/uuid_utils-0.14.1-cp39-abi3-macosx_10_12_x86_64.macosx_11_0_arm64.macosx_10_12_universal2.whl"
-    sha256 "93a3b5dc798a54a1feb693f2d1cb4cf08258c32ff05ae4929b5f0a2ca624a4f0"
+    url "https://files.pythonhosted.org/packages/source/u/uuid-utils/uuid_utils-0.14.1.tar.gz"
+    sha256 "9bfc95f64af80ccf129c604fb6b8ca66c6f256451e32bc4570f760e4309c9b69"
   end
 
   resource "ollama" do
