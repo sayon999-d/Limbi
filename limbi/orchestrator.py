@@ -175,6 +175,9 @@ def _needs_clarification(user_message: str) -> list[str]:
     has_vague_language = any(word in text for word in vague_words)
     has_path_context = any(word in text for word in path_words)
 
+    if _looks_like_actionable_code_task(user_message):
+        return []
+
     if len(text) <= 3 and len(words) <= 1 and not _extract_urls(user_message):
         return ["What exactly would you like me to do?"]
 
@@ -384,6 +387,42 @@ def _looks_like_file_creation_prompt(user_message: str) -> bool:
     )
 
 
+def _looks_like_actionable_code_task(user_message: str) -> bool:
+    text = (user_message or "").lower()
+    action_tokens = (
+        "create",
+        "build",
+        "implement",
+        "write",
+        "generate",
+        "save",
+        "fix",
+        "repair",
+        "debug",
+        "update",
+        "edit",
+        "change",
+        "patch",
+    )
+    context_tokens = (
+        "file",
+        "workspace",
+        "project",
+        "folder",
+        "script",
+        "app",
+        "code",
+        "output",
+        "error",
+        "bug",
+        "traceback",
+        "exception",
+        "source",
+        "snippet",
+    )
+    return any(token in text for token in action_tokens) and any(token in text for token in context_tokens)
+
+
 def _infer_artifact_language(content: str, filename: str = "") -> str:
     suffix = Path(filename).suffix.lower()
     if suffix in {".py"}:
@@ -457,6 +496,22 @@ def _infer_artifact_filename(user_message: str, content: str, language_hint: str
     return f"{slug}{ext or '.txt'}"
 
 
+def _extract_code_candidate(text: str) -> tuple[str, str]:
+    code_blocks = _extract_code_blocks(text)
+    if code_blocks:
+        best_block = max(code_blocks, key=lambda block: len(block.get("content", "")))
+        content = str(best_block.get("content") or "").strip()
+        language_hint = str(best_block.get("language") or "").strip()
+        if content:
+            return content, language_hint
+
+    lowered = (text or "").lower()
+    if any(token in lowered for token in ("def ", "class ", "import ", "from ", "function ", "const ", "let ", "var ", "return ", "<html", "#!/bin/bash")):
+        return text.strip(), ""
+
+    return "", ""
+
+
 async def _save_generated_artifact(
     *,
     user_message: str,
@@ -464,9 +519,10 @@ async def _save_generated_artifact(
     raw_text: str,
     runtime_model: str,
     provider_config: ProviderConfig,
+    history: list[HumanMessage | AIMessage] | None = None,
     progress_callback: Callable[[str], None] | None = None,
 ) -> dict[str, Any]:
-    if not _looks_like_file_creation_prompt(user_message):
+    if not (_looks_like_file_creation_prompt(user_message) or _looks_like_actionable_code_task(user_message)):
         return {}
 
     code_blocks = _extract_code_blocks(raw_text) or _extract_code_blocks(draft_text)
@@ -478,6 +534,14 @@ async def _save_generated_artifact(
         language_hint = str(best_block.get("language") or "").strip()
     elif any(token in draft_text.lower() for token in ("```", "def ", "class ", "function ", "console.log", "<html")):
         content = draft_text.strip()
+
+    if not content and _looks_like_actionable_code_task(user_message) and history:
+        for message in reversed(history):
+            if not isinstance(message, AIMessage):
+                continue
+            content, language_hint = _extract_code_candidate(str(getattr(message, "content", "") or ""))
+            if content:
+                break
 
     if not content:
         try:
@@ -1661,6 +1725,7 @@ class Orchestrator:
             raw_text=raw_text,
             runtime_model=runtime_model,
             provider_config=self._provider.config,
+            history=self._history,
             progress_callback=progress_callback,
         )
         if artifact_info:
@@ -2017,6 +2082,7 @@ class Orchestrator:
             raw_text=full_text,
             runtime_model=runtime_model,
             provider_config=self._provider.config,
+            history=self._history,
             progress_callback=progress_callback,
         )
         if artifact_info:
