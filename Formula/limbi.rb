@@ -11,6 +11,7 @@ class Limbi < Formula
   depends_on "git"
   depends_on "ripgrep"
   depends_on "ffmpeg"
+  depends_on "rust" => :build
 
   resource "langchain-core" do
     url "https://files.pythonhosted.org/packages/1f/01/4771b7ab2af1d1aba5b710bd8f13d9225c609425214b357590a17b01be77/langchain_core-1.3.3-py3-none-any.whl"
