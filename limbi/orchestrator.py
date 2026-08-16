@@ -612,22 +612,25 @@ async def _save_generated_artifact(
     language = language_hint or _infer_artifact_language(content, str(target))
     validation_result = None
     if language in {"python", "javascript", "typescript", "go", "bash"}:
-        validation_result = get_agent("code_agent").execute(
-            "validate_syntax",
-            {
-                "code": content,
-                "language": language,
-            },
-        )
-        record_trace_event(
-            kind="artifact.validation",
-            message="artifact syntax validation completed",
-            payload={
-                "language": language,
-                "success": validation_result.success,
-                "error": validation_result.error,
-            },
-        )
+        try:
+            validation_result = get_agent("code_agent").execute(
+                "validate_syntax",
+                {
+                    "code": content,
+                    "language": language,
+                },
+            )
+            record_trace_event(
+                kind="artifact.validation",
+                message="artifact syntax validation completed",
+                payload={
+                    "language": language,
+                    "success": validation_result.success,
+                    "error": validation_result.error,
+                },
+            )
+        except Exception as exc:
+            logger.debug("Skipping code validation because code_agent is unavailable: %s", exc)
 
     save_result = get_agent("file_agent").execute(
         "write_to_file",

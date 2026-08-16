@@ -1,8 +1,11 @@
 from __future__ import annotations
 
 import logging
+import pkgutil
 from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
+from importlib import import_module
+from pathlib import Path
 from typing import Any, ClassVar
 
 from limbi.agent_contracts import (
@@ -133,9 +136,40 @@ class BaseAgent(ABC):
         ...
 
 _AGENT_REGISTRY: dict[str, type[BaseAgent]] = {}
+_AGENT_DISCOVERY_STARTED = False
+_AGENT_DISCOVERY_COMPLETE = False
+
+
+def _load_agent_module(module_name: str) -> None:
+    if not module_name or module_name.startswith("_") or module_name == "__init__":
+        return
+    try:
+        import_module(f"{__name__}.{module_name}")
+    except Exception as exc:
+        logger.debug("Skipping agent module %s: %s", module_name, exc)
+
+
+def _discover_builtin_agents() -> None:
+    global _AGENT_DISCOVERY_STARTED, _AGENT_DISCOVERY_COMPLETE
+    if _AGENT_DISCOVERY_COMPLETE or _AGENT_DISCOVERY_STARTED:
+        return
+    _AGENT_DISCOVERY_STARTED = True
+    try:
+        package_dir = Path(__file__).resolve().parent
+        for module_info in pkgutil.iter_modules([str(package_dir)]):
+            _load_agent_module(module_info.name)
+        _AGENT_DISCOVERY_COMPLETE = True
+    finally:
+        _AGENT_DISCOVERY_STARTED = False
 
 def get_agent(name: str) -> BaseAgent:
     cls = _AGENT_REGISTRY.get(name)
+    if cls is None:
+        _load_agent_module(name)
+        cls = _AGENT_REGISTRY.get(name)
+    if cls is None:
+        _discover_builtin_agents()
+        cls = _AGENT_REGISTRY.get(name)
     if cls is None:
         raise KeyError(
             f"No agent registered as '{name}'. "
@@ -144,6 +178,7 @@ def get_agent(name: str) -> BaseAgent:
     return cls()
 
 def list_agents() -> dict[str, list[str]]:
+    _discover_builtin_agents()
     return {
         name: cls().available_actions
         for name, cls in _AGENT_REGISTRY.items()
