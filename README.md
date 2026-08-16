@@ -16,6 +16,8 @@ Limbi is an omni-agent orchestration platform for running many specialized AI ag
 
 Current package version: `2.1.5`
 
+Changelog: [`CHANGELOG.md`](CHANGELOG.md)
+
 
 ## Quick Install
 
