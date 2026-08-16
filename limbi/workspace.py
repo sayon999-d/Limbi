@@ -970,5 +970,23 @@ def resolve_mcp_servers(config: dict[str, Any]) -> dict[str, dict[str, Any]]:
     return resolved
 
 
-def build_mcp_config(config: dict[str, Any]) -> dict[str, Any]:
-    return {"servers": resolve_mcp_servers(config)}
+def merge_mcp_config(
+    existing_config: dict[str, Any] | None,
+    workspace_config: dict[str, Any],
+) -> dict[str, Any]:
+    merged = dict(existing_config) if isinstance(existing_config, dict) else {}
+    existing_servers = merged.get("servers")
+    if not isinstance(existing_servers, dict):
+        existing_servers = {}
+
+    merged_servers = dict(existing_servers)
+    merged_servers.update(resolve_mcp_servers(workspace_config))
+    merged["servers"] = merged_servers
+    return merged
+
+
+def build_mcp_config(
+    config: dict[str, Any],
+    existing_config: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    return merge_mcp_config(existing_config, config)

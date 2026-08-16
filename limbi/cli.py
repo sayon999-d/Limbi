@@ -523,6 +523,30 @@ def _select_from_menu(console, title: str, choices: list[Any], default_index: in
             raise click.ClickException("Selection cancelled.")
 
 
+def _select_from_numbered_list(
+    console,
+    title: str,
+    choices: list[Any],
+    default_index: int = 0,
+    help_text: str = "",
+) -> Any:
+    if not choices:
+        raise click.ClickException(f"No choices available for {title}.")
+
+    console.print(f"[bold bright_green]{title}[/]")
+    if help_text:
+        console.print(f"[dim]{help_text}[/]")
+    console.print()
+    for idx, choice in enumerate(choices, start=1):
+        console.print(f"  {idx}. {_render_menu_entry(choice)}")
+    selected = click.prompt(
+        "Choose number",
+        type=click.IntRange(1, len(choices)),
+        default=max(1, min(len(choices), default_index + 1)),
+    )
+    return choices[selected - 1]
+
+
 def _prompt_yes_no(console, prompt: str, *, default: bool | None = None) -> bool:
     default_hint = ""
     if default is True:
@@ -768,12 +792,12 @@ def _configure_runtime_from_model_choice(state: dict[str, Any], console) -> None
 
     _print_model_choices(console)
     provider_default = _resolve_model_choice(state.get("provider") or "ollama")
-    provider_item = _select_from_menu(
+    provider_item = _select_from_numbered_list(
         console,
         "Choose provider",
         _provider_choice_items(),
         default_index=list(_PROVIDER_CHOICES).index(provider_default) if provider_default in _PROVIDER_CHOICES else 0,
-        help_text="Use Up/Down to move, then Enter to choose.",
+        help_text="Pick a number and press Enter.",
     )
     provider = provider_item["name"]
     defaults = _PROVIDER_CHOICES.get(provider, {})
@@ -817,16 +841,16 @@ def _configure_runtime_from_model_choice(state: dict[str, Any], console) -> None
             preferred_model = str(defaults.get("model") or "").strip()
         if preferred_model not in catalog_models:
             preferred_model = catalog_models[0]
-        model_item = _select_from_menu(
+        model_item = _select_from_numbered_list(
             console,
             f"Choose model for {provider}",
             [{"name": item, "label": item, "details": ""} for item in catalog_models],
             default_index=catalog_models.index(preferred_model) if preferred_model in catalog_models else 0,
-            help_text="Use Up/Down to move, then Enter to choose.",
+            help_text="Pick a number and press Enter.",
         )
         model = model_item["name"]
     elif provider == "ollama_cloud":
-        model_item = _select_from_menu(
+        model_item = _select_from_numbered_list(
             console,
             "Choose an Ollama Cloud model",
             [
@@ -839,7 +863,7 @@ def _configure_runtime_from_model_choice(state: dict[str, Any], console) -> None
         model = model_item["name"]
     elif defaults.get("type") == "local":
         suggestions = _LOW_MEMORY_LOCAL_MODELS.get(provider, _LOW_MEMORY_LOCAL_MODELS["default"])
-        model_item = _select_from_menu(
+        model_item = _select_from_numbered_list(
             console,
             f"Choose a low-memory model for {provider}",
             [
@@ -877,18 +901,17 @@ def _configure_runtime_from_model_choice(state: dict[str, Any], console) -> None
     state["api_key"] = api_key
     _refresh_orchestrator(state)
 
-    if _prompt_yes_no(console, "Save this provider/model to the workspace config?", default=False):
-        ws_config = dict(state["ws_config"])
-        ws_config["provider"] = provider
-        ws_config["model"] = model
-        ws_config["base_url"] = base_url
-        if api_key:
-            ws_config = set_provider_api_key(ws_config, provider, api_key, base_url)
-        else:
-            ws_config["api_key_set"] = bool(ws_config.get("provider_api_keys"))
-        ws_config = set_preferred_model(ws_config, provider, model, base_url)
-        save_config(ws_config)
-        state["ws_config"] = ws_config
+    ws_config = dict(state["ws_config"])
+    ws_config["provider"] = provider
+    ws_config["model"] = model
+    ws_config["base_url"] = base_url
+    if api_key:
+        ws_config = set_provider_api_key(ws_config, provider, api_key, base_url)
+    else:
+        ws_config["api_key_set"] = bool(ws_config.get("provider_api_keys"))
+    ws_config = set_preferred_model(ws_config, provider, model, base_url)
+    save_config(ws_config)
+    state["ws_config"] = ws_config
 
     provider_summary = state["orchestrator"]._provider  # noqa: SLF001
     console.print(
@@ -896,6 +919,7 @@ def _configure_runtime_from_model_choice(state: dict[str, Any], console) -> None
         f"[green]Model:[/] [bold]{provider_summary.config.model}[/] "
         f"[green]Endpoint:[/] [bold]{provider_summary.config.base_url or '(provider default)'}[/]\n"
     )
+    console.print("[dim]Saved to workspace config.[/]")
 
 
 def _manage_provider_keys(state: dict[str, Any], console) -> None:
@@ -2137,7 +2161,14 @@ def _generate_mcp_config(config_path: str | None = None) -> Path:
         path = Path.cwd() / path
     path.parent.mkdir(parents=True, exist_ok=True)
 
-    config = build_mcp_config(load_config())
+    existing_config: dict[str, Any] = {}
+    if path.exists():
+        try:
+            existing_config = json.loads(path.read_text(encoding="utf-8"))
+        except Exception:
+            existing_config = {}
+
+    config = build_mcp_config(load_config(), existing_config=existing_config)
     path.write_text(json.dumps(config, indent=2) + "\n", encoding="utf-8")
     return path
 

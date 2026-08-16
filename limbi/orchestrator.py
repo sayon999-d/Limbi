@@ -76,6 +76,11 @@ You can BOTH:
   there is no safe default, ask a single focused question instead of multiple questions.
 - If a needed capability is missing, use `mutation_agent` to propose a new agent only after the user approves.
 - For create/write/save tasks, do not only describe the work; either emit a delegation block for file/code actions or provide the final source in a fenced code block with a filename so Limbi can persist it.
+- For build/create/fix/generate/write requests, assume a sensible default stack and
+  start the work immediately. Do not ask for extra preferences about language,
+  framework, or platform unless the missing detail prevents progress.
+- Never turn a concrete implementation request into a long interview. If one detail is
+  truly blocking, ask one short question and keep moving.
 
 ## How Delegation Works
 When you decide an action needs to be executed in the real world, include a \
@@ -113,6 +118,8 @@ When you decide an action needs to be executed in the real world, include a \
 
 {shared_agent_context}
 
+{task_execution_policy}
+
 {rag_context}
 
 ## URL Research Context
@@ -131,6 +138,22 @@ When you decide an action needs to be executed in the real world, include a \
 - If a URL cannot be fetched or rendered, say so plainly and do not invent details.
 - If the user asks for research, answer the topic directly from the research context and do not dump the agent registry unless the user asked about agents.
 """
+
+
+def _build_task_execution_policy(user_message: str, task_route: str) -> str:
+    text = (user_message or "").lower()
+    if task_route in {"delegate", "direct"} and any(
+        token in text
+        for token in ("build", "create", "make", "design", "write", "implement", "fix", "generate", "start")
+    ):
+        return (
+            "## Task Execution Policy\n"
+            "- The user gave a concrete implementation request.\n"
+            "- Assume a sensible default stack and start the work immediately.\n"
+            "- Do not ask for extra preferences about language, framework, or platform unless the missing detail blocks progress.\n"
+            "- If a single blocking detail is truly required, ask one short question only.\n"
+        )
+    return ""
 
 
 def _needs_clarification(user_message: str) -> list[str]:
@@ -1530,6 +1553,7 @@ class Orchestrator:
             temperature=runtime_limits["temperature"],
             model_name=runtime_model,
         )
+        task_execution_policy = _build_task_execution_policy(user_message, task_route)
         system_text = SYSTEM_PROMPT.format(
             agent_registry=agent_registry,
             agent_guide=agent_guide_text if agent_guide_text else "",
@@ -1538,6 +1562,7 @@ class Orchestrator:
             web_research_context=web_research_context,
             recent_executions=recent_execs,
             shared_agent_context=shared_ctx,
+            task_execution_policy=task_execution_policy,
         )
 
         messages = [SystemMessage(content=system_text)]
@@ -1895,6 +1920,7 @@ class Orchestrator:
             temperature=runtime_limits["temperature"],
             model_name=runtime_model,
         )
+        task_execution_policy = _build_task_execution_policy(user_message, task_route)
         system_text = SYSTEM_PROMPT.format(
             agent_registry=agent_registry,
             agent_guide=agent_guide_text if agent_guide_text else "",
@@ -1903,6 +1929,7 @@ class Orchestrator:
             web_research_context=web_research_context,
             recent_executions=recent_execs,
             shared_agent_context=shared_ctx,
+            task_execution_policy=task_execution_policy,
         )
 
         messages = [SystemMessage(content=system_text)]
