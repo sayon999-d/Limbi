@@ -34,11 +34,11 @@ All notable changes to this project will be documented in this file.
 ### Chore
 - Describe maintenance tasks, dependency updates, and release prep here.
 
-## 2.1.5 - 2026-08-16
+## 2.1.16 - 2026-08-16
 
 ### Changed
 - Bumped the package version across Python metadata, CLI output, docs, and website copy.
-- Updated the Homebrew formula to the `2.1.5` source tarball and checksum.
+- Updated the Homebrew formula to the `2.1.16` source tarball and checksum.
 - Switched the GitHub PyPI workflow to build with `twine` using `PYPI_API_TOKEN`.
 
 ### Fixed

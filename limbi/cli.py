@@ -228,7 +228,7 @@ def _print_banner(console):
 
     title = Text()
     title.append("LIMBI", style="bold bright_green")
-    title.append(" v2.1.5", style="bold white")
+    title.append(" v2.1.16", style="bold white")
     title.append(" - Omni-Agent Orchestrator", style="white")
 
     help_line = Text()
@@ -2690,7 +2690,7 @@ Type a natural-language prompt to talk to Limbi.
     default=False,
     help="Skip workspace trust prompt (for CI/automation).",
 )
-@click.version_option(version="2.1.5", prog_name="limbi")
+@click.version_option(version="2.1.16", prog_name="limbi")
 def main(
     prompt: str | None,
     provider: str | None,

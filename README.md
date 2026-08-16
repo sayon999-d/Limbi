@@ -14,7 +14,7 @@
 
 Limbi is an omni-agent orchestration platform for running many specialized AI agents from one command, one Python API, or one MCP-compatible editor workflow.
 
-Current package version: `2.1.5`
+Current package version: `2.1.16`
 
 Changelog: [`CHANGELOG.md`](CHANGELOG.md)
 
